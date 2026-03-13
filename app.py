@@ -125,7 +125,7 @@ def get_data():
     if os.path.exists(EXCEL_PATH):
         return load_app_sheet(EXCEL_PATH)
     st.info("📂 Local file not found — upload the workbook below.")
-    uploaded = st.file_uploader("Upload Mechanical_Targets_vXX.xlsm",
+    uploaded = st.file_uploader("Upload Mechanical_Targets_v11.xlsm",
                                 type=["xlsx","xlsm"], key="wb_upload")
     if uploaded is None:
         return None
