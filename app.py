@@ -305,20 +305,16 @@ def render_individual(df_pw, person):
 # ─────────────────────────────────────────────
 
 def render_team(df_week, week_label_str):
-    """Render the all-crew grid for one week."""
+    """Render the all-crew grid for one week — ALL crew shown."""
     st.markdown(f"## 👥 All Crew — {week_label_str}")
 
-    active         = df_week[df_week["Wk_Achieved"] > 0]
-    all_persons    = sorted(df_week["Person"].unique())
-    active_persons = list(active["Person"].unique()) if len(active) else []
-
-    if len(active) == 0:
-        st.info("No QField activity recorded for this week yet.")
+    if df_week.empty:
+        st.info("No data found for this week.")
         return
 
-    # Aggregate: one row per person across all tasks
+    # ── Aggregate: one row per person (ALL people, not just active) ───
     summary = (
-        active
+        df_week
         .groupby("Person")
         .agg(
             total_ach=("Wk_Achieved",   "sum"),
@@ -327,52 +323,67 @@ def render_team(df_week, week_label_str):
         )
         .reset_index()
     )
-    summary["pct"] = summary.apply(
-        lambda r: r["total_ach"] / r["total_tgt"] * 100
-        if r["total_tgt"] > 0 else 0.0,
-        axis=1
-    )
-    summary = summary.sort_values("pct", ascending=False).reset_index(drop=True)
 
-    inactive   = [p for p in all_persons if p not in active_persons]
+    # % is calculated only against tasks the person actually worked
+    # (avoids counting targets for tasks they weren't assigned to)
+    def person_pct(p):
+        rows = df_week[
+            (df_week["Person"] == p) & (df_week["Wk_Achieved"] > 0)
+        ]
+        ach = rows["Wk_Achieved"].sum()
+        tgt = rows["Wk_Target_Real"].sum()
+        return (ach / tgt * 100) if tgt > 0 else 0.0
+
+    summary["pct"]    = summary["Person"].apply(person_pct)
+    summary["active"] = summary["total_ach"] > 0
+
+    # Sort: active people by % desc, then inactive alphabetically
+    active_df   = summary[summary["active"]].sort_values("pct", ascending=False)
+    inactive_df = summary[~summary["active"]].sort_values("Person")
+    summary     = pd.concat([active_df, inactive_df], ignore_index=True)
+
     on_track   = int((summary["pct"] >= 95).sum())
     borderline = int(((summary["pct"] >= 85) & (summary["pct"] < 95)).sum())
-    need_sat   = int((summary["pct"] < 85).sum())
+    need_sat   = int((summary["active"] & (summary["pct"] < 85)).sum())
+    no_act     = int((~summary["active"]).sum())
 
     # ── Quick stats ──────────────────────────
     mc1, mc2, mc3, mc4 = st.columns(4)
     mc1.metric("✅ On Track (≥95%)",      on_track)
     mc2.metric("⚠️ Borderline (85–94%)",  borderline)
     mc3.metric("❌ Need Saturday (<85%)", need_sat)
-    mc4.metric("— No Activity",           len(inactive))
+    mc4.metric("— No Activity",           no_act)
 
     st.markdown("---")
 
-    # ── Crew cards grid ───────────────────────
+    # ── Crew cards grid — every single person ─
     cols = st.columns(4)
     for i, row in summary.iterrows():
-        pct = row["pct"]
-        lbl, badge, ccls = status_info(pct)
+        pct    = row["pct"]
+        active = row["active"]
+
+        if active:
+            lbl, badge, ccls = status_info(pct)
+            units_str = f'{row["total_ach"]:.0f} / {row["total_tgt"]:.0f} units'
+            pct_str   = f"{pct:.1f}%"
+        else:
+            lbl, badge, ccls = "— NO DATA", "badge-nodata", "grey"
+            units_str = "No activity this week"
+            pct_str   = "—"
+
         with cols[i % 4]:
             st.markdown(
                 f'<div class="crew-card">'
                 f'<div class="crew-name">{row["Person"]}</div>'
-                f'<div class="big-pct {ccls}">{pct:.1f}%</div>'
-                f'{prog_bar(pct)}'
+                f'<div class="big-pct {ccls}">{pct_str}</div>'
+                f'{prog_bar(pct) if active else ""}'
                 f'<div style="font-size:0.8rem;color:#aaa;margin-top:0.3rem;">'
-                f'{row["total_ach"]:.0f} / {row["total_tgt"]:.0f} units'
+                f'{units_str}'
                 f'</div>'
                 f'<span class="badge {badge}">{lbl}</span>'
                 f'</div>',
                 unsafe_allow_html=True
             )
-
-    # ── Inactive crew ─────────────────────────
-    if inactive:
-        st.markdown("---")
-        with st.expander(f"👻 {len(inactive)} crew with no activity this week"):
-            for name in sorted(inactive):
-                st.markdown(f"- {name}")
 
 # ─────────────────────────────────────────────
 # MAIN
