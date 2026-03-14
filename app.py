@@ -85,13 +85,21 @@ def load_app_sheet(_unused=None):
         st.error("Google Sheet 'app' is empty — run RefreshAppSheet in Excel and push first.")
         return None
 
-    # Strip column names
+    # Strip column names of whitespace
     df.columns = [str(c).strip() for c in df.columns]
 
-    # Drop metadata rows (e.g. "Last refreshed...")
+    # ── DEBUG: remove after confirming columns are correct ──
+    st.write("Columns found:", df.columns.tolist())
+    st.write(df.head(3))
+    # ────────────────────────────────────────────────────────
+
+    # Drop metadata rows
     if "Person" in df.columns:
         df = df[df["Person"].notna()]
         df = df[~df["Person"].astype(str).str.startswith("Last refreshed")]
+    else:
+        st.error(f"'Person' column not found. Columns available: {df.columns.tolist()}")
+        return None
 
     # Parse Week_Start
     def to_date(v):
@@ -112,7 +120,6 @@ def load_app_sheet(_unused=None):
     df["Task"]         = df["Task"].astype(str).str.strip()
     df["Sat_Decision"] = df["Sat_Decision"].astype(str).str.strip()
     return df
-
 
 def get_data():
     return load_app_sheet()
