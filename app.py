@@ -1,8 +1,7 @@
 import streamlit as st
 import pandas as pd
-import openpyxl
 from datetime import datetime, date
-import os
+import io
 
 st.set_page_config(page_title="Fulham SF – Crew Targets", page_icon="🎯", layout="wide")
 
@@ -44,15 +43,20 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-EXCEL_PATH = r"C:\Users\AdrianBrasero\OneDrive - Solar Farm Constructions\SFC-Operations - General\03 OPERATIONS\04 CURRENT PROJECTS\FULHAM SF\02 HUMAN RESOURCES\09 INCENTIVES\Mechanical_Targets_v11.xlsm"
 
+# ── Google Sheet published as CSV ─────────────────────────────────────────────
+# File > Share > Publish to web > Sheet "app" > CSV
+GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/1_eWq5Mx9zBfKfkqP56wqH3uLnwbv3k714t0dztzOEo4/edit?usp=sharing"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 def status_info(pct):
-    if pct >= 100:  return "✅ GO HOME",     "badge-go",     "green"
-    elif pct >= 95: return "✅ GO (95%+)",   "badge-go",     "green"
-    elif pct >= 85: return "⚠️ BORDERLINE",  "badge-border", "amber"
-    elif pct > 0:   return "❌ SAT REQUIRED","badge-stay",   "red"
-    else:           return "— NO DATA",      "badge-nodata", "grey"
+    if pct >= 100:  return "✅ GO HOME",      "badge-go",     "green"
+    elif pct >= 95: return "✅ GO (95%+)",    "badge-go",     "green"
+    elif pct >= 85: return "⚠️ BORDERLINE",   "badge-border", "amber"
+    elif pct > 0:   return "❌ SAT REQUIRED", "badge-stay",   "red"
+    else:           return "— NO DATA",       "badge-nodata", "grey"
 
 
 def prog_bar(pct):
@@ -70,45 +74,34 @@ def fmt_date(d):
 
 
 @st.cache_data(ttl=300)
-def load_app_sheet(source):
+def load_app_sheet(_unused=None):
     try:
-        wb = openpyxl.load_workbook(source, read_only=True, keep_vba=True, data_only=True)
+        df = pd.read_csv(GOOGLE_SHEET_CSV_URL)
     except Exception as e:
-        st.error(f"Cannot open workbook: {e}")
+        st.error(f"Cannot load Google Sheet: {e}")
         return None
 
-    if "app" not in wb.sheetnames:
-        st.error("Sheet **'app'** not found.  \nOpen the Excel file and run the **RefreshAppSheet** macro first.")
+    if df.empty:
+        st.error("Google Sheet 'app' is empty — run RefreshAppSheet in Excel and push first.")
         return None
 
-    ws = wb["app"]
-    rows = list(ws.iter_rows(min_row=1, values_only=True))
-    if len(rows) < 2:
-        st.error("'app' sheet is empty — run RefreshAppSheet in Excel first.")
-        return None
+    # Strip column names
+    df.columns = [str(c).strip() for c in df.columns]
 
-    headers = [str(h).strip() if h is not None else f"col_{i}" for i, h in enumerate(rows[0])]
+    # Drop metadata rows (e.g. "Last refreshed...")
+    if "Person" in df.columns:
+        df = df[df["Person"].notna()]
+        df = df[~df["Person"].astype(str).str.startswith("Last refreshed")]
 
-    data = []
-    for row in rows[1:]:
-        if row[0] is None:
-            continue
-        if str(row[0]).startswith("Last refreshed"):
-            break
-        data.append(dict(zip(headers, row)))
-
-    if not data:
-        st.error("No data rows found in 'app' sheet.")
-        return None
-
-    df = pd.DataFrame(data)
-
+    # Parse Week_Start
     def to_date(v):
         if isinstance(v, datetime): return v.date()
         if isinstance(v, date):     return v
-        return None
+        try:    return pd.to_datetime(v, dayfirst=True).date()
+        except: return None
 
-    df["Week_Start"] = df["Week_Start"].apply(to_date)
+    if "Week_Start" in df.columns:
+        df["Week_Start"] = df["Week_Start"].apply(to_date)
 
     for col in ["Mon","Tue","Wed","Thu","Fri","Sat","Wk_Achieved","Wk_Target_Real",
                 "Wk_Target_Theo","Pct_Real","Remaining_Units","Days_To_Deadline"]:
@@ -122,14 +115,7 @@ def load_app_sheet(source):
 
 
 def get_data():
-    if os.path.exists(EXCEL_PATH):
-        return load_app_sheet(EXCEL_PATH)
-    st.info("📂 Local file not found — upload the workbook below.")
-    uploaded = st.file_uploader("Upload Mechanical_Targets_v11.xlsm",
-                                type=["xlsx","xlsm"], key="wb_upload")
-    if uploaded is None:
-        return None
-    return load_app_sheet(uploaded)
+    return load_app_sheet()
 
 
 def render_individual(df_pw, person):
@@ -248,10 +234,10 @@ def render_team(df_week, week_label_str):
     need_sat   = int((summary["pct"] < 85).sum())
 
     mc1, mc2, mc3, mc4 = st.columns(4)
-    mc1.metric("✅ On Track (≥95%)",       on_track)
-    mc2.metric("⚠️ Borderline (85–94%)",   borderline)
-    mc3.metric("❌ Need Saturday (<85%)",   need_sat)
-    mc4.metric("— No Activity",            len(inactive))
+    mc1.metric("✅ On Track (≥95%)",     on_track)
+    mc2.metric("⚠️ Borderline (85–94%)", borderline)
+    mc3.metric("❌ Need Saturday (<85%)", need_sat)
+    mc4.metric("— No Activity",          len(inactive))
 
     st.markdown("---")
 
@@ -281,11 +267,11 @@ def render_team(df_week, week_label_str):
 def main():
     df = get_data()
     if df is None:
-        st.error("No data could be loaded. Please ensure workbook exists or is uploaded.")
+        st.error("No data could be loaded.")
         return
 
     if "Week_Start" not in df.columns:
-        st.error("Column 'Week_Start' missing in uploaded data. Please run RefreshAppSheet in Excel and re-upload.")
+        st.error("Column 'Week_Start' missing. Run RefreshAppSheet in Excel and push again.")
         return
 
     weeks_raw = sorted(df["Week_Start"].dropna().unique())
@@ -293,7 +279,7 @@ def main():
         st.error("No week data found.")
         return
 
-    week_labels = {w: f"{fmt_date(w)}  (Week {i+1})" for i, w in enumerate(weeks_raw)}
+    week_labels  = {w: f"{fmt_date(w)}  (Week {i+1})" for i, w in enumerate(weeks_raw)}
     week_options = list(week_labels.values())
     persons      = sorted(df["Person"].unique().tolist())
 
@@ -320,7 +306,7 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.caption(
         "After each daily QField import, open Excel and run  \n"
-        "**RefreshAppSheet** to update this dashboard."
+        "**RefreshAppSheet → Push to Google Sheets** to update."
     )
     st.sidebar.caption(f"🕒 {datetime.now().strftime('%I:%M %p, %d %b %Y')}")
     if st.sidebar.button("🔄 Clear Cache & Reload"):
@@ -330,7 +316,7 @@ def main():
     df_week = df[df["Week_Start"] == sel_week].copy()
 
     if view == "👥 Team Overview":
-        render_team(df_week, sel_week_lbl)
+        render_team(df_week, week_label_str=sel_week_lbl)
     else:
         df_pw = df_week[df_week["Person"] == sel_person].copy()
         if len(df_pw) == 0:
