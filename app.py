@@ -42,13 +42,10 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ── Google Sheet ──────────────────────────────────────────────────────────────
-# Sheet must be shared as "Anyone with the link → Viewer"
+# ── Google Sheet (must be shared as "Anyone with the link → Viewer") ──────────
 SHEET_ID = "1_eWq5Mx9zBfKfkqP56wqH3uLnwbv3k714t0dztzOEo4"
-CSV_URL  = (
-    f"https://docs.google.com/spreadsheets/d/{SHEET_ID}"
-    f"/export?format=csv&sheet=app"
-)
+CSV_URL  = (f"https://docs.google.com/spreadsheets/d/{SHEET_ID}"
+            f"/export?format=csv&sheet=app")
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -59,80 +56,71 @@ def status_info(pct):
     elif pct > 0:   return "❌ SAT REQUIRED", "badge-stay",   "red"
     else:           return "— NO DATA",       "badge-nodata", "grey"
 
-
 def prog_bar(pct):
     cap = min(float(pct), 100)
     c = "#4dff91" if pct >= 95 else ("#ffd54f" if pct >= 85 else "#ff6b6b")
-    return f'<div class="prog-wrap"><div class="prog-bar" style="width:{cap:.1f}%;background:{c};"></div></div>'
+    return (f'<div class="prog-wrap">'
+            f'<div class="prog-bar" style="width:{cap:.1f}%;background:{c};"></div>'
+            f'</div>')
 
-
-def fmt_date_pretty(iso_str):
-    """'2026-03-09'  →  '09 Mar 2026'"""
-    try:
-        return datetime.strptime(iso_str, "%Y-%m-%d").strftime("%d %b %Y")
-    except Exception:
-        return iso_str
-
+def fmt_date(iso_str):
+    try:    return datetime.strptime(str(iso_str), "%Y-%m-%d").strftime("%d %b %Y")
+    except: return str(iso_str)
 
 def parse_date_to_iso(v):
     """
-    Try to convert any date value to a canonical ISO string 'YYYY-MM-DD'.
-    The VBA CStr() on a date cell with Australian locale produces 'D/MM/YYYY'
-    or 'DD/MM/YYYY'. Google Sheets export may produce various formats.
-    We try explicit formats in priority order and always return a string.
-    Returns None if nothing works.
+    Convert any date value to 'YYYY-MM-DD' string.
+    VBA CStr() with Australian locale writes dates as 'D/MM/YYYY'.
+    We try formats in priority order — ISO first (most reliable).
     """
-    if v is None or (isinstance(v, float) and pd.isna(v)):
-        return None
+    if v is None: return None
     s = str(v).strip()
-    if not s or s.lower() == "nan":
-        return None
+    if not s or s.lower() == "nan": return None
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y", "%d %b %Y", "%d %B %Y"):
+        try:    return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
+        except: pass
+    try:    return pd.to_datetime(s, dayfirst=False).strftime("%Y-%m-%d")
+    except: return None
 
-    # Ordered list of formats to try
-    # ISO goes first — most reliable
-    formats = [
-        "%Y-%m-%d",    # 2026-03-09  (ISO / VBA NumberFormat YYYY-MM-DD)
-        "%d/%m/%Y",    # 09/03/2026  (Australian DD/MM/YYYY from CStr)
-        "%m/%d/%Y",    # 03/09/2026  (US format)
-        "%d-%m-%Y",    # 09-03-2026
-        "%d %b %Y",    # 09 Mar 2026
-        "%d %B %Y",    # 09 March 2026
-    ]
-    for fmt in formats:
-        try:
-            return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
-        except ValueError:
-            pass
-
-    # Last resort: let pandas have a go (may be wrong for ambiguous dates
-    # but better than returning None)
-    try:
-        return pd.to_datetime(s).strftime("%Y-%m-%d")
-    except Exception:
-        return None
-
-
-def safe_num(v):
+def safe_num(v, is_daily=False):
     """
-    Parse a numeric value that might arrive as:
-    - a plain number:  286.3
-    - a pct string:    "34.0%"  (Excel display-formatted percentage)
-    - empty / nan
-    Always returns a float. Percentage strings are divided by 100.
+    Parse a cell value that may be:
+    - a plain float:       "286.33"
+    - a percentage string: "34.0%"
+    - a European-thousands-corrupted number: "303.333.333.333.333"
+      (caused by VBA CStr() using locale comma as decimal, then Google Sheets
+       misreading comma as thousands separator and re-exporting with dot separators)
+    
+    The fix_vba flag: once PushToGoogleSheets uses Str() instead of CStr(),
+    these corrupted values will no longer appear.  This function handles
+    both old (corrupt) and new (clean) data.
+
+    is_daily=True: column is Mon/Tue/Wed/Thu/Fri/Sat (max ~700/person/day).
+                   Values > 500 after the ÷10^12 recovery are divided by 10.
+    is_daily=False: column is a weekly aggregate (max ~5000). No ÷10.
     """
-    if v is None:
-        return 0.0
-    try:
-        if pd.isna(v):
-            return 0.0
-    except TypeError:
-        pass
+    if v is None: return 0.0
     s = str(v).strip()
-    if not s or s.lower() == "nan":
-        return 0.0
+    if not s or s.lower() == "nan": return 0.0
+
     if s.endswith("%"):
         try:    return float(s[:-1]) / 100.0
         except: return 0.0
+
+    # Detect corrupted European-thousands format: two or more dots
+    if s.count(".") >= 2:
+        digits = s.replace(".", "")
+        try:
+            N = float(digits)
+            val = N / 1e12   # restore 15-significant-digit double
+            if is_daily and val > 500:
+                # Daily value > 500 means the ÷10^12 result is 10x too large.
+                # Divide by 10 to recover the true value.
+                val = val / 10.0
+            return val
+        except:
+            pass
+
     try:    return float(s)
     except: return 0.0
 
@@ -142,26 +130,23 @@ def safe_num(v):
 @st.cache_data(ttl=300)
 def load_data():
     try:
-        df = pd.read_csv(CSV_URL, dtype=str)   # read everything as strings first
+        df = pd.read_csv(CSV_URL, dtype=str, on_bad_lines="skip")
     except Exception as e:
         st.error(
-            "❌ Cannot load the Google Sheet CSV.\n\n"
+            "❌ Cannot load Google Sheet.\n\n"
             "**Check:** File → Share → *Anyone with the link → Viewer*\n\n"
             f"`{e}`"
         )
         return None
 
     if df.empty:
-        st.error("The 'app' tab is empty — run RefreshAppSheet then PushToGoogleSheets.")
+        st.error("Sheet 'app' is empty — run RefreshAppSheet then PushToGoogleSheets in Excel.")
         return None
 
     df.columns = [str(c).strip() for c in df.columns]
 
     if "Person" not in df.columns:
-        st.error(
-            f"Column 'Person' not found. The data may not have been pushed yet.\n\n"
-            f"Columns found: `{df.columns.tolist()[:10]}`"
-        )
+        st.error(f"Column 'Person' not found. Columns: `{df.columns.tolist()[:10]}`")
         return None
 
     # Drop blank / timestamp rows
@@ -169,39 +154,36 @@ def load_data():
     df = df[df["Person"].astype(str).str.strip() != ""].copy()
     df = df[~df["Person"].astype(str).str.startswith("Last refreshed")].copy()
 
-    # ── Parse Week_Start → canonical ISO string "YYYY-MM-DD" ─────────────────
-    # Storing as a string (not a date object) avoids ALL pandas/Python type
-    # comparison issues. We just compare strings when filtering.
-    if "Week_Start" in df.columns:
-        df["Week_Start"] = df["Week_Start"].apply(parse_date_to_iso)
-    else:
-        st.error("Column 'Week_Start' not found in the sheet.")
+    # Parse Week_Start → canonical ISO string "YYYY-MM-DD"
+    # Stored as string avoids ALL pandas date comparison issues.
+    if "Week_Start" not in df.columns:
+        st.error("Column 'Week_Start' not found.")
         return None
-
-    # Drop rows where we couldn't parse the date
+    df["Week_Start"] = df["Week_Start"].apply(parse_date_to_iso)
     df = df[df["Week_Start"].notna()].copy()
 
-    # ── Parse all numeric columns ─────────────────────────────────────────────
-    num_cols = [
-        "Mon", "Tue", "Wed", "Thu", "Fri", "Sat",
-        "Wk_Achieved", "Wk_Target_Real", "Wk_Target_Theo",
-        "Pct_Real", "Remaining_Units", "Days_To_Deadline"
-    ]
-    for col in num_cols:
-        if col in df.columns:
-            df[col] = df[col].apply(safe_num)
+    # Daily columns (Mon–Sat): max per-person per-day ≈ 700 → is_daily=True
+    daily_cols   = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    weekly_cols  = ["Wk_Achieved", "Wk_Target_Real", "Wk_Target_Theo",
+                    "Pct_Real", "Remaining_Units", "Days_To_Deadline"]
 
-    # ── Recalculate Pct_Real from scratch (don't trust stored value) ──────────
+    for col in daily_cols:
+        if col in df.columns:
+            df[col] = df[col].apply(lambda v: safe_num(v, is_daily=True))
+
+    for col in weekly_cols:
+        if col in df.columns:
+            df[col] = df[col].apply(lambda v: safe_num(v, is_daily=False))
+
+    # Recalculate Pct_Real from raw columns (don't trust the stored value)
     df["Pct_Real"] = df.apply(
         lambda r: r["Wk_Achieved"] / r["Wk_Target_Real"]
-        if r["Wk_Target_Real"] > 0 else 0.0,
-        axis=1
-    )
+        if r["Wk_Target_Real"] > 0 else 0.0, axis=1)
 
     df["Person"]       = df["Person"].astype(str).str.strip()
     df["Task"]         = df["Task"].astype(str).str.strip()
-    df["Sat_Decision"] = df["Sat_Decision"].astype(str).str.strip() if "Sat_Decision" in df.columns else "No data"
-
+    df["Sat_Decision"] = df["Sat_Decision"].astype(str).str.strip() \
+                         if "Sat_Decision" in df.columns else "No data"
     return df
 
 
@@ -220,26 +202,22 @@ def render_individual(df_pw, person):
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.markdown(
-            f'<div class="summary-card"><div class="label">Total Units This Week</div>'
-            f'<div class="value {ccls}">{total_ach:.1f}</div></div>',
-            unsafe_allow_html=True)
+        st.markdown(f'<div class="summary-card"><div class="label">Total Units This Week</div>'
+                    f'<div class="value {ccls}">{total_ach:.1f}</div></div>',
+                    unsafe_allow_html=True)
     with c2:
-        st.markdown(
-            f'<div class="summary-card"><div class="label">Avg Completion</div>'
-            f'<div class="value {ccls}">{avg_pct:.1f}%</div></div>',
-            unsafe_allow_html=True)
+        st.markdown(f'<div class="summary-card"><div class="label">Avg Completion</div>'
+                    f'<div class="value {ccls}">{avg_pct:.1f}%</div></div>',
+                    unsafe_allow_html=True)
     with c3:
-        st.markdown(
-            f'<div class="summary-card"><div class="label">Saturday Decision</div>'
-            f'<div class="value" style="font-size:0.9rem;padding-top:0.8rem;">'
-            f'<span class="badge {badge}">{label}</span></div></div>',
-            unsafe_allow_html=True)
+        st.markdown(f'<div class="summary-card"><div class="label">Saturday Decision</div>'
+                    f'<div class="value" style="font-size:0.9rem;padding-top:0.8rem;">'
+                    f'<span class="badge {badge}">{label}</span></div></div>',
+                    unsafe_allow_html=True)
     with c4:
-        st.markdown(
-            f'<div class="summary-card"><div class="label">Days to Deadline</div>'
-            f'<div class="value grey">{days_left}</div></div>',
-            unsafe_allow_html=True)
+        st.markdown(f'<div class="summary-card"><div class="label">Days to Deadline</div>'
+                    f'<div class="value grey">{days_left}</div></div>',
+                    unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -260,11 +238,9 @@ def render_individual(df_pw, person):
     def render_task(row, expanded=True):
         pct = row["Pct_Real"] * 100
         lbl, badge_t, _ = status_info(pct)
-        header = (
-            f"**{row['Task']}**  —  "
-            f"{row['Wk_Achieved']:.1f} / {row['Wk_Target_Real']:.1f} units  "
-            f"({pct:.1f}%)"
-        )
+        header = (f"**{row['Task']}**  —  "
+                  f"{row['Wk_Achieved']:.1f} / {row['Wk_Target_Real']:.1f} units  "
+                  f"({pct:.1f}%)")
         with st.expander(header, expanded=expanded):
             left, right = st.columns([3, 1])
             with left:
@@ -294,7 +270,6 @@ def render_individual(df_pw, person):
         st.markdown("##### 🔥 Active Tasks")
         for _, row in active_tasks.iterrows():
             render_task(row, expanded=True)
-
     if len(passive_tasks):
         st.markdown("##### 📌 No Activity This Week")
         for _, row in passive_tasks.iterrows():
@@ -375,15 +350,13 @@ def main():
     if df is None:
         st.stop()
 
-    # Week_Start is now stored as "YYYY-MM-DD" strings — sort and compare as strings
     weeks_raw = sorted(df["Week_Start"].dropna().unique())
     if not weeks_raw:
-        st.error("No week data found in the sheet.")
+        st.error("No week data found.")
         st.stop()
 
-    # Pretty labels for the dropdown: "09 Mar 2026  (Week 1)"
-    week_labels  = {w: f"{fmt_date_pretty(w)}  (Week {i+1})"
-                    for i, w in enumerate(weeks_raw)}
+    # Week_Start is stored as "YYYY-MM-DD" strings — compare as strings
+    week_labels  = {w: f"{fmt_date(w)}  (Week {i+1})" for i, w in enumerate(weeks_raw)}
     week_options = list(week_labels.values())
     persons      = sorted(df["Person"].unique().tolist())
     latest       = weeks_raw[-1]
@@ -391,7 +364,7 @@ def main():
     st.markdown(
         f'<div class="main-header">'
         f'<h1>🎯 Fulham Solar Farm — Weekly Targets</h1>'
-        f'<p>Latest data: {fmt_date_pretty(latest)}'
+        f'<p>Latest data: {fmt_date(latest)}'
         f'  ·  {len(weeks_raw)} week{"s" if len(weeks_raw) != 1 else ""} tracked'
         f'  ·  {len(persons)} crew members</p>'
         f'</div>',
@@ -403,18 +376,13 @@ def main():
 
     st.sidebar.markdown("**Select Week:**")
     sel_week_lbl = st.sidebar.selectbox(
-        "", week_options, index=len(week_options)-1,
-        label_visibility="collapsed"
-    )
-    # sel_week is the ISO string key e.g. "2026-03-09"
+        "", week_options, index=len(week_options)-1, label_visibility="collapsed")
     sel_week = next(w for w, lbl in week_labels.items() if lbl == sel_week_lbl)
 
     sel_person = None
     if view == "👤 Individual":
         st.sidebar.markdown("**Select Person:**")
-        sel_person = st.sidebar.selectbox(
-            "", persons, label_visibility="collapsed"
-        )
+        sel_person = st.sidebar.selectbox("", persons, label_visibility="collapsed")
 
     st.sidebar.markdown("---")
     st.sidebar.caption(
@@ -424,15 +392,13 @@ def main():
         "3. Run **PushToGoogleSheets** macro\n"
         "4. Click Reload ↓"
     )
-    st.sidebar.caption(
-        f"📊 {len(df)} rows · {len(weeks_raw)} weeks\n\n"
-        f"🕒 {datetime.now().strftime('%I:%M %p, %d %b %Y')}"
-    )
+    st.sidebar.caption(f"📊 {len(df)} rows · {len(weeks_raw)} weeks\n\n"
+                       f"🕒 {datetime.now().strftime('%I:%M %p, %d %b %Y')}")
     if st.sidebar.button("🔄 Clear Cache & Reload"):
         st.cache_data.clear()
         st.rerun()
 
-    # Filter: simple string equality — no date type issues
+    # Simple string equality — no date type issues
     df_week = df[df["Week_Start"] == sel_week].copy()
 
     if view == "👥 Team Overview":
@@ -443,12 +409,10 @@ def main():
         else:
             df_pw = df_week[df_week["Person"] == sel_person].copy()
             if len(df_pw) == 0:
-                # Debug hint shown when someone has no rows at all
-                all_weeks = df[df["Person"] == sel_person]["Week_Start"].unique()
+                all_weeks = sorted(df[df["Person"] == sel_person]["Week_Start"].unique())
                 st.warning(
                     f"No data for **{sel_person}** in week `{sel_week}`.\n\n"
-                    f"This person's data exists for weeks: `{sorted(all_weeks)}`\n\n"
-                    "If weeks don't match, the date format in the sheet may need checking."
+                    f"Weeks found for this person: `{all_weeks}`"
                 )
             else:
                 render_individual(df_pw, sel_person)
