@@ -46,7 +46,7 @@ st.markdown("""
 
 # ── Google Sheet published as CSV ─────────────────────────────────────────────
 # File > Share > Publish to web > Sheet "app" > CSV
-GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/1_eWq5Mx9zBfKfkqP56wqH3uLnwbv3k714t0dztzOEo4/edit?usp=sharing"
+GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/1_eWq5Mx9zBfKfkqP56wqH3uLnwbv3k714t0dztzOEo4//gviz/tq?tqx=out:csv&sheet=app"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
