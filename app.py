@@ -2,14 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, date
 
-# ─────────────────────────────────────────────
-# PAGE CONFIG
-# ─────────────────────────────────────────────
-st.set_page_config(
-    page_title="Fulham SF – Crew Targets",
-    page_icon="🎯",
-    layout="wide"
-)
+st.set_page_config(page_title="Fulham SF – Crew Targets", page_icon="🎯", layout="wide")
 
 st.markdown("""
 <style>
@@ -30,52 +23,36 @@ st.markdown("""
     .summary-card .value { font-size: 2.2rem; font-weight: 700; line-height: 1; }
     .crew-card {
         background: #1e1e2e; border-radius: 10px; padding: 1.2rem;
-        text-align: center; border: 1px solid rgba(255,255,255,0.08);
-        margin-bottom: 1rem;
+        text-align: center; border: 1px solid rgba(255,255,255,0.08); margin-bottom: 1rem;
     }
-    .crew-card .crew-name {
-        font-weight: 600; font-size: 0.95rem;
-        margin-bottom: 0.5rem; color: #e0e0e0;
-    }
-    .crew-card .big-pct { font-size: 2rem; font-weight: 800; line-height: 1; }
+    .crew-card .crew-name { font-weight:600; font-size:0.95rem; margin-bottom:0.5rem; color:#e0e0e0; }
+    .crew-card .big-pct   { font-size:2rem; font-weight:800; line-height:1; }
     .badge {
-        display: inline-block; padding: 0.3rem 0.9rem; border-radius: 20px;
-        font-size: 0.75rem; font-weight: 700; letter-spacing: 0.04em;
-        margin-top: 0.4rem;
+        display:inline-block; padding:0.3rem 0.9rem; border-radius:20px;
+        font-size:0.75rem; font-weight:700; letter-spacing:0.04em; margin-top:0.4rem;
     }
-    .badge-go     { background: #1a6b3a; color: #7dffb3; }
-    .badge-border { background: #6b5a00; color: #ffe57d; }
-    .badge-stay   { background: #6b1a1a; color: #ff8a8a; }
-    .badge-nodata { background: #333;    color: #aaa; }
-    .green { color: #4dff91; }
-    .amber { color: #ffd54f; }
-    .red   { color: #ff6b6b; }
-    .grey  { color: #888; }
-    .prog-wrap {
-        background: #2a2a3e; border-radius: 6px;
-        height: 12px; overflow: hidden; margin: 0.4rem 0;
-    }
-    .prog-bar { height: 100%; border-radius: 6px; }
+    .badge-go     { background:#1a6b3a; color:#7dffb3; }
+    .badge-border { background:#6b5a00; color:#ffe57d; }
+    .badge-stay   { background:#6b1a1a; color:#ff8a8a; }
+    .badge-nodata { background:#333;    color:#aaa; }
+    .green { color:#4dff91; } .amber { color:#ffd54f; }
+    .red   { color:#ff6b6b; } .grey  { color:#888; }
+    .prog-wrap { background:#2a2a3e; border-radius:6px; height:12px; overflow:hidden; margin:0.4rem 0; }
+    .prog-bar  { height:100%; border-radius:6px; }
 </style>
 """, unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────
-# GOOGLE SHEET CSV URL
-# Uses the gviz endpoint — sheet must be set to
-# "Anyone with the link can view"
-# ─────────────────────────────────────────────
+# ── Google Sheet ──────────────────────────────────────────────────────────────
+# Sheet must be shared as "Anyone with the link → Viewer"
 SHEET_ID = "1_eWq5Mx9zBfKfkqP56wqH3uLnwbv3k714t0dztzOEo4"
 CSV_URL  = (
     f"https://docs.google.com/spreadsheets/d/{SHEET_ID}"
-    f"/gviz/tq?tqx=out:csv&sheet=app"
+    f"/export?format=csv&sheet=app"
 )
 
-# ─────────────────────────────────────────────
-# HELPERS
-# ─────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def status_info(pct):
-    """Return (label, badge_class, colour_class) for a completion %."""
     if pct >= 100:  return "✅ GO HOME",      "badge-go",     "green"
     elif pct >= 95: return "✅ GO (95%+)",    "badge-go",     "green"
     elif pct >= 85: return "⚠️ BORDERLINE",   "badge-border", "amber"
@@ -84,80 +61,127 @@ def status_info(pct):
 
 
 def prog_bar(pct):
-    """Return an HTML progress bar string."""
     cap = min(float(pct), 100)
-    colour = "#4dff91" if pct >= 95 else ("#ffd54f" if pct >= 85 else "#ff6b6b")
-    return (
-        f'<div class="prog-wrap">'
-        f'<div class="prog-bar" style="width:{cap:.1f}%;background:{colour};"></div>'
-        f'</div>'
-    )
+    c = "#4dff91" if pct >= 95 else ("#ffd54f" if pct >= 85 else "#ff6b6b")
+    return f'<div class="prog-wrap"><div class="prog-bar" style="width:{cap:.1f}%;background:{c};"></div></div>'
 
 
-def fmt_date(d):
-    """Format a date/datetime as DD Mon YYYY."""
-    if isinstance(d, datetime): d = d.date()
-    if isinstance(d, date):     return d.strftime("%d %b %Y")
-    return str(d)
+def fmt_date_pretty(iso_str):
+    """'2026-03-09'  →  '09 Mar 2026'"""
+    try:
+        return datetime.strptime(iso_str, "%Y-%m-%d").strftime("%d %b %Y")
+    except Exception:
+        return iso_str
 
 
-def to_date(v):
-    """Convert any value to a Python date, or None."""
-    if isinstance(v, datetime): return v.date()
-    if isinstance(v, date):     return v
-    try:    return pd.to_datetime(v, dayfirst=True).date()
-    except: return None
+def parse_date_to_iso(v):
+    """
+    Try to convert any date value to a canonical ISO string 'YYYY-MM-DD'.
+    The VBA CStr() on a date cell with Australian locale produces 'D/MM/YYYY'
+    or 'DD/MM/YYYY'. Google Sheets export may produce various formats.
+    We try explicit formats in priority order and always return a string.
+    Returns None if nothing works.
+    """
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return None
+    s = str(v).strip()
+    if not s or s.lower() == "nan":
+        return None
 
-# ─────────────────────────────────────────────
-# DATA LOADING
-# ─────────────────────────────────────────────
+    # Ordered list of formats to try
+    # ISO goes first — most reliable
+    formats = [
+        "%Y-%m-%d",    # 2026-03-09  (ISO / VBA NumberFormat YYYY-MM-DD)
+        "%d/%m/%Y",    # 09/03/2026  (Australian DD/MM/YYYY from CStr)
+        "%m/%d/%Y",    # 03/09/2026  (US format)
+        "%d-%m-%Y",    # 09-03-2026
+        "%d %b %Y",    # 09 Mar 2026
+        "%d %B %Y",    # 09 March 2026
+    ]
+    for fmt in formats:
+        try:
+            return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+
+    # Last resort: let pandas have a go (may be wrong for ambiguous dates
+    # but better than returning None)
+    try:
+        return pd.to_datetime(s).strftime("%Y-%m-%d")
+    except Exception:
+        return None
+
+
+def safe_num(v):
+    """
+    Parse a numeric value that might arrive as:
+    - a plain number:  286.3
+    - a pct string:    "34.0%"  (Excel display-formatted percentage)
+    - empty / nan
+    Always returns a float. Percentage strings are divided by 100.
+    """
+    if v is None:
+        return 0.0
+    try:
+        if pd.isna(v):
+            return 0.0
+    except TypeError:
+        pass
+    s = str(v).strip()
+    if not s or s.lower() == "nan":
+        return 0.0
+    if s.endswith("%"):
+        try:    return float(s[:-1]) / 100.0
+        except: return 0.0
+    try:    return float(s)
+    except: return 0.0
+
+
+# ── Data loading ──────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=300)
 def load_data():
-    """
-    Fetch the 'app' tab from Google Sheets as CSV and return a clean DataFrame.
-    Columns expected (written by RefreshAppSheet VBA macro):
-      Person | Week_Start | Task | Mon | Tue | Wed | Thu | Fri | Sat |
-      Wk_Achieved | Wk_Target_Real | Wk_Target_Theo | Pct_Real |
-      Remaining_Units | Sat_Decision | Days_To_Deadline
-    """
     try:
-        df = pd.read_csv(CSV_URL)
+        df = pd.read_csv(CSV_URL, dtype=str)   # read everything as strings first
     except Exception as e:
         st.error(
-            "❌ Cannot load the Google Sheet.\n\n"
-            "**Checklist:**\n"
-            "1. The sheet is shared as *Anyone with the link → Viewer*\n"
-            "2. The 'app' tab exists (run RefreshAppSheet in Excel first)\n"
-            "3. PushToGoogleSheets ran successfully\n\n"
-            f"Error detail: `{e}`"
+            "❌ Cannot load the Google Sheet CSV.\n\n"
+            "**Check:** File → Share → *Anyone with the link → Viewer*\n\n"
+            f"`{e}`"
         )
         return None
 
     if df.empty:
-        st.error("The 'app' tab is empty — run RefreshAppSheet then PushToGoogleSheets in Excel.")
+        st.error("The 'app' tab is empty — run RefreshAppSheet then PushToGoogleSheets.")
         return None
 
-    # Clean column names
     df.columns = [str(c).strip() for c in df.columns]
 
     if "Person" not in df.columns:
         st.error(
-            "Expected column 'Person' not found. "
-            "The sheet may not have been pushed yet.\n\n"
-            f"Columns seen: `{df.columns.tolist()}`"
+            f"Column 'Person' not found. The data may not have been pushed yet.\n\n"
+            f"Columns found: `{df.columns.tolist()[:10]}`"
         )
         return None
 
     # Drop blank / timestamp rows
     df = df[df["Person"].notna()].copy()
+    df = df[df["Person"].astype(str).str.strip() != ""].copy()
     df = df[~df["Person"].astype(str).str.startswith("Last refreshed")].copy()
 
-    # Parse dates
+    # ── Parse Week_Start → canonical ISO string "YYYY-MM-DD" ─────────────────
+    # Storing as a string (not a date object) avoids ALL pandas/Python type
+    # comparison issues. We just compare strings when filtering.
     if "Week_Start" in df.columns:
-        df["Week_Start"] = df["Week_Start"].apply(to_date)
+        df["Week_Start"] = df["Week_Start"].apply(parse_date_to_iso)
+    else:
+        st.error("Column 'Week_Start' not found in the sheet.")
+        return None
 
-    # Parse numeric columns
+    # Drop rows where we couldn't parse the date
+    df = df[df["Week_Start"].notna()].copy()
+
+    # ── Parse all numeric columns ─────────────────────────────────────────────
     num_cols = [
         "Mon", "Tue", "Wed", "Thu", "Fri", "Sat",
         "Wk_Achieved", "Wk_Target_Real", "Wk_Target_Theo",
@@ -165,23 +189,25 @@ def load_data():
     ]
     for col in num_cols:
         if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+            df[col] = df[col].apply(safe_num)
 
-    # Clean string columns
+    # ── Recalculate Pct_Real from scratch (don't trust stored value) ──────────
+    df["Pct_Real"] = df.apply(
+        lambda r: r["Wk_Achieved"] / r["Wk_Target_Real"]
+        if r["Wk_Target_Real"] > 0 else 0.0,
+        axis=1
+    )
+
     df["Person"]       = df["Person"].astype(str).str.strip()
     df["Task"]         = df["Task"].astype(str).str.strip()
-    df["Sat_Decision"] = df["Sat_Decision"].astype(str).str.strip()
+    df["Sat_Decision"] = df["Sat_Decision"].astype(str).str.strip() if "Sat_Decision" in df.columns else "No data"
 
     return df
 
-# ─────────────────────────────────────────────
-# INDIVIDUAL VIEW
-# ─────────────────────────────────────────────
+
+# ── Individual view ───────────────────────────────────────────────────────────
 
 def render_individual(df_pw, person):
-    """Render one person's weekly dashboard."""
-
-    # Overall summary for this person this week (active tasks only)
     active    = df_pw[df_pw["Wk_Achieved"] > 0]
     total_ach = active["Wk_Achieved"].sum()
     total_tgt = active["Wk_Target_Real"].sum()
@@ -192,54 +218,37 @@ def render_individual(df_pw, person):
     label, badge, ccls = status_info(avg_pct)
     st.markdown(f"## 👤 {person}")
 
-    # ── Summary cards ────────────────────────
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.markdown(
-            f'<div class="summary-card">'
-            f'<div class="label">Total Units This Week</div>'
-            f'<div class="value {ccls}">{total_ach:.0f}</div>'
-            f'</div>',
-            unsafe_allow_html=True
-        )
+            f'<div class="summary-card"><div class="label">Total Units This Week</div>'
+            f'<div class="value {ccls}">{total_ach:.1f}</div></div>',
+            unsafe_allow_html=True)
     with c2:
         st.markdown(
-            f'<div class="summary-card">'
-            f'<div class="label">Avg Completion</div>'
-            f'<div class="value {ccls}">{avg_pct:.1f}%</div>'
-            f'</div>',
-            unsafe_allow_html=True
-        )
+            f'<div class="summary-card"><div class="label">Avg Completion</div>'
+            f'<div class="value {ccls}">{avg_pct:.1f}%</div></div>',
+            unsafe_allow_html=True)
     with c3:
         st.markdown(
-            f'<div class="summary-card">'
-            f'<div class="label">Saturday Decision</div>'
+            f'<div class="summary-card"><div class="label">Saturday Decision</div>'
             f'<div class="value" style="font-size:0.9rem;padding-top:0.8rem;">'
-            f'<span class="badge {badge}">{label}</span>'
-            f'</div></div>',
-            unsafe_allow_html=True
-        )
+            f'<span class="badge {badge}">{label}</span></div></div>',
+            unsafe_allow_html=True)
     with c4:
         st.markdown(
-            f'<div class="summary-card">'
-            f'<div class="label">Days to Deadline</div>'
-            f'<div class="value grey">{days_left}</div>'
-            f'</div>',
-            unsafe_allow_html=True
-        )
+            f'<div class="summary-card"><div class="label">Days to Deadline</div>'
+            f'<div class="value grey">{days_left}</div></div>',
+            unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Alert banner ─────────────────────────
-    dec_lower = sat_dec.lower()
-    if "saturday required" in dec_lower:
-        st.error(
-            f"⚠️ {sat_dec}  —  "
-            f"{max(0, total_tgt - total_ach):.0f} units still owed this week"
-        )
-    elif "go home" in dec_lower:
+    dec = sat_dec.lower()
+    if "saturday required" in dec:
+        st.error(f"⚠️ {sat_dec}  —  {max(0, total_tgt - total_ach):.1f} units still owed")
+    elif "go home" in dec:
         st.success(f"✅ {sat_dec}")
-    elif dec_lower not in ("no activity", "no data"):
+    elif dec not in ("no activity", "no data"):
         st.warning(f"📋 {sat_dec}")
 
     st.markdown("---")
@@ -248,14 +257,12 @@ def render_individual(df_pw, person):
     active_tasks  = df_pw[df_pw["Wk_Achieved"] > 0]
     passive_tasks = df_pw[df_pw["Wk_Achieved"] == 0]
 
-    # ── Task renderer ─────────────────────────
     def render_task(row, expanded=True):
-        # Pct_Real stored as fraction (0.22) or already % — normalise
-        pct = row["Pct_Real"] * 100 if row["Pct_Real"] <= 1.5 else row["Pct_Real"]
+        pct = row["Pct_Real"] * 100
         lbl, badge_t, _ = status_info(pct)
         header = (
             f"**{row['Task']}**  —  "
-            f"{row['Wk_Achieved']:.0f} / {row['Wk_Target_Real']:.0f} units  "
+            f"{row['Wk_Achieved']:.1f} / {row['Wk_Target_Real']:.1f} units  "
             f"({pct:.1f}%)"
         )
         with st.expander(header, expanded=expanded):
@@ -263,32 +270,25 @@ def render_individual(df_pw, person):
             with left:
                 st.markdown("**Daily Achieved:**")
                 daily = pd.DataFrame({
-                    "Day":      ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
-                    "Achieved": [
-                        row["Mon"], row["Tue"], row["Wed"],
-                        row["Thu"], row["Fri"], row["Sat"]
-                    ]
+                    "Day":      ["Mon","Tue","Wed","Thu","Fri","Sat"],
+                    "Achieved": [row["Mon"],row["Tue"],row["Wed"],
+                                 row["Thu"],row["Fri"],row["Sat"]]
                 })
                 st.bar_chart(daily.set_index("Day"), height=200)
-
             with right:
-                st.markdown("**Weekly Summary:**")
-                st.metric("Achieved",      f"{row['Wk_Achieved']:.0f}")
-                st.metric("Target (Real)", f"{row['Wk_Target_Real']:.0f}")
-                st.metric("Target (Theo)", f"{row['Wk_Target_Theo']:.0f}")
+                st.markdown("**Weekly:**")
+                st.metric("Achieved",      f"{row['Wk_Achieved']:.1f}")
+                st.metric("Target (Real)", f"{row['Wk_Target_Real']:.1f}")
+                st.metric("Target (Theo)", f"{row['Wk_Target_Theo']:.1f}")
                 rem = row["Wk_Target_Real"] - row["Wk_Achieved"]
-                if rem > 0:
-                    st.metric(
-                        "Still Owed", f"{rem:.0f}",
-                        delta=f"{pct:.1f}%", delta_color="inverse"
-                    )
+                if rem > 0.01:
+                    st.metric("Still Owed", f"{rem:.1f}",
+                              delta=f"{pct:.1f}%", delta_color="inverse")
                 else:
                     st.metric("Remaining", "✅ Done")
                 st.markdown(prog_bar(pct), unsafe_allow_html=True)
-                st.markdown(
-                    f'<span class="badge {badge_t}">{lbl}</span>',
-                    unsafe_allow_html=True
-                )
+                st.markdown(f'<span class="badge {badge_t}">{lbl}</span>',
+                            unsafe_allow_html=True)
 
     if len(active_tasks):
         st.markdown("##### 🔥 Active Tasks")
@@ -300,44 +300,31 @@ def render_individual(df_pw, person):
         for _, row in passive_tasks.iterrows():
             render_task(row, expanded=False)
 
-# ─────────────────────────────────────────────
-# TEAM OVERVIEW
-# ─────────────────────────────────────────────
+
+# ── Team overview ─────────────────────────────────────────────────────────────
 
 def render_team(df_week, week_label_str):
-    """Render the all-crew grid for one week — ALL crew shown."""
     st.markdown(f"## 👥 All Crew — {week_label_str}")
 
     if df_week.empty:
         st.info("No data found for this week.")
         return
 
-    # ── Aggregate: one row per person (ALL people, not just active) ───
-    summary = (
-        df_week
-        .groupby("Person")
-        .agg(
-            total_ach=("Wk_Achieved",   "sum"),
-            total_tgt=("Wk_Target_Real", "sum"),
-            sat_dec  =("Sat_Decision",   "first"),
-        )
-        .reset_index()
-    )
+    def person_summary(grp):
+        worked = grp[grp["Wk_Achieved"] > 0]
+        ach    = worked["Wk_Achieved"].sum()
+        tgt    = worked["Wk_Target_Real"].sum()
+        pct    = (ach / tgt * 100) if tgt > 0 else 0.0
+        return pd.Series({
+            "total_ach": ach,
+            "total_tgt": tgt,
+            "pct":       pct,
+            "sat_dec":   grp["Sat_Decision"].iloc[0],
+            "active":    ach > 0,
+        })
 
-    # % is calculated only against tasks the person actually worked
-    # (avoids counting targets for tasks they weren't assigned to)
-    def person_pct(p):
-        rows = df_week[
-            (df_week["Person"] == p) & (df_week["Wk_Achieved"] > 0)
-        ]
-        ach = rows["Wk_Achieved"].sum()
-        tgt = rows["Wk_Target_Real"].sum()
-        return (ach / tgt * 100) if tgt > 0 else 0.0
+    summary = df_week.groupby("Person").apply(person_summary).reset_index()
 
-    summary["pct"]    = summary["Person"].apply(person_pct)
-    summary["active"] = summary["total_ach"] > 0
-
-    # Sort: active people by % desc, then inactive alphabetically
     active_df   = summary[summary["active"]].sort_values("pct", ascending=False)
     inactive_df = summary[~summary["active"]].sort_values("Person")
     summary     = pd.concat([active_df, inactive_df], ignore_index=True)
@@ -347,7 +334,6 @@ def render_team(df_week, week_label_str):
     need_sat   = int((summary["active"] & (summary["pct"] < 85)).sum())
     no_act     = int((~summary["active"]).sum())
 
-    # ── Quick stats ──────────────────────────
     mc1, mc2, mc3, mc4 = st.columns(4)
     mc1.metric("✅ On Track (≥95%)",      on_track)
     mc2.metric("⚠️ Borderline (85–94%)",  borderline)
@@ -356,20 +342,18 @@ def render_team(df_week, week_label_str):
 
     st.markdown("---")
 
-    # ── Crew cards grid — every single person ─
     cols = st.columns(4)
     for i, row in summary.iterrows():
         pct    = row["pct"]
         active = row["active"]
-
         if active:
             lbl, badge, ccls = status_info(pct)
-            units_str = f'{row["total_ach"]:.0f} / {row["total_tgt"]:.0f} units'
             pct_str   = f"{pct:.1f}%"
+            units_str = f'{row["total_ach"]:.0f} / {row["total_tgt"]:.0f} units'
         else:
             lbl, badge, ccls = "— NO DATA", "badge-nodata", "grey"
-            units_str = "No activity this week"
             pct_str   = "—"
+            units_str = "No activity this week"
 
         with cols[i % 4]:
             st.markdown(
@@ -377,57 +361,52 @@ def render_team(df_week, week_label_str):
                 f'<div class="crew-name">{row["Person"]}</div>'
                 f'<div class="big-pct {ccls}">{pct_str}</div>'
                 f'{prog_bar(pct) if active else ""}'
-                f'<div style="font-size:0.8rem;color:#aaa;margin-top:0.3rem;">'
-                f'{units_str}'
-                f'</div>'
+                f'<div style="font-size:0.8rem;color:#aaa;margin-top:0.3rem;">{units_str}</div>'
                 f'<span class="badge {badge}">{lbl}</span>'
                 f'</div>',
                 unsafe_allow_html=True
             )
 
-# ─────────────────────────────────────────────
-# MAIN
-# ─────────────────────────────────────────────
+
+# ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    # ── Load data ────────────────────────────
     df = load_data()
     if df is None:
         st.stop()
 
-    # ── Build week / person lists ─────────────
+    # Week_Start is now stored as "YYYY-MM-DD" strings — sort and compare as strings
     weeks_raw = sorted(df["Week_Start"].dropna().unique())
     if not weeks_raw:
         st.error("No week data found in the sheet.")
         st.stop()
 
-    week_labels  = {w: f"{fmt_date(w)}  (Week {i+1})"
+    # Pretty labels for the dropdown: "09 Mar 2026  (Week 1)"
+    week_labels  = {w: f"{fmt_date_pretty(w)}  (Week {i+1})"
                     for i, w in enumerate(weeks_raw)}
     week_options = list(week_labels.values())
     persons      = sorted(df["Person"].unique().tolist())
     latest       = weeks_raw[-1]
 
-    # ── Header ──────────────────────────────
     st.markdown(
         f'<div class="main-header">'
         f'<h1>🎯 Fulham Solar Farm — Weekly Targets</h1>'
-        f'<p>Latest data: {fmt_date(latest)}'
+        f'<p>Latest data: {fmt_date_pretty(latest)}'
         f'  ·  {len(weeks_raw)} week{"s" if len(weeks_raw) != 1 else ""} tracked'
         f'  ·  {len(persons)} crew members</p>'
         f'</div>',
         unsafe_allow_html=True
     )
 
-    # ── Sidebar ──────────────────────────────
     st.sidebar.title("🔍 Navigation")
     view = st.sidebar.radio("View", ["👤 Individual", "👥 Team Overview"])
 
     st.sidebar.markdown("**Select Week:**")
     sel_week_lbl = st.sidebar.selectbox(
-        "", week_options,
-        index=len(week_options) - 1,   # default = latest week
+        "", week_options, index=len(week_options)-1,
         label_visibility="collapsed"
     )
+    # sel_week is the ISO string key e.g. "2026-03-09"
     sel_week = next(w for w, lbl in week_labels.items() if lbl == sel_week_lbl)
 
     sel_person = None
@@ -443,15 +422,17 @@ def main():
         "1. Import QField data into Excel\n"
         "2. Run **RefreshAppSheet** macro\n"
         "3. Run **PushToGoogleSheets** macro\n"
-        "4. Click Reload below ↓"
+        "4. Click Reload ↓"
     )
-    st.sidebar.caption(f"🕒 {datetime.now().strftime('%I:%M %p, %d %b %Y')}")
-
+    st.sidebar.caption(
+        f"📊 {len(df)} rows · {len(weeks_raw)} weeks\n\n"
+        f"🕒 {datetime.now().strftime('%I:%M %p, %d %b %Y')}"
+    )
     if st.sidebar.button("🔄 Clear Cache & Reload"):
         st.cache_data.clear()
         st.rerun()
 
-    # ── Route to view ────────────────────────
+    # Filter: simple string equality — no date type issues
     df_week = df[df["Week_Start"] == sel_week].copy()
 
     if view == "👥 Team Overview":
@@ -462,10 +443,12 @@ def main():
         else:
             df_pw = df_week[df_week["Person"] == sel_person].copy()
             if len(df_pw) == 0:
+                # Debug hint shown when someone has no rows at all
+                all_weeks = df[df["Person"] == sel_person]["Week_Start"].unique()
                 st.warning(
-                    f"No data found for **{sel_person}** in {sel_week_lbl}.\n\n"
-                    "This person may not have been active this week, or the sheet "
-                    "hasn't been refreshed yet."
+                    f"No data for **{sel_person}** in week `{sel_week}`.\n\n"
+                    f"This person's data exists for weeks: `{sorted(all_weeks)}`\n\n"
+                    "If weeks don't match, the date format in the sheet may need checking."
                 )
             else:
                 render_individual(df_pw, sel_person)
