@@ -432,6 +432,11 @@ def render_mgmt_progress():
         )
         return
 
+    # Debug: show what columns arrived (remove once confirmed working)
+    with st.expander("🔍 Debug — columns received (click to expand)", expanded=False):
+        st.write("Columns:", df.columns.tolist())
+        st.dataframe(df.head(3))
+
     # ── Parse all numeric columns robustly ───────────────────
     # Values from Excel may arrive as plain integers (22296),
     # fractions (0.313), or European-corrupted strings (22.296.000).
@@ -467,8 +472,8 @@ def render_mgmt_progress():
         days_left  = str(or_.get("Days_Left", "")).replace("DAYS TO DEADLINE:", "").strip()
     else:
         # Calculate from task rows if overall row missing
-        total_req  = df["Total_Required"].sum()
-        total_done = df["Completed"].sum()
+        total_req  = df["Total_Required"].sum() if "Total_Required" in df.columns else 0.0
+        total_done = df["Completed"].sum()      if "Completed"      in df.columns else 0.0
         total_rem  = total_req - total_done
         ov_pct     = (total_done / total_req * 100) if total_req > 0 else 0.0
 
