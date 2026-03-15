@@ -172,52 +172,70 @@ def load_crew_data():
 def load_progress_data():
     """
     Always fetches fresh — no @st.cache_data.
-    Tries multiple tab name variants to handle Google Sheets case sensitivity.
-    Google Sheets export silently returns the first sheet when the tab name
-    isn't found, so we validate the returned columns to detect that.
+    Uses the gviz endpoint which correctly resolves sheet names.
+    The /export?format=csv endpoint silently returns the first sheet when
+    the named sheet isn't found — gviz raises an error instead, so we can
+    detect failure and try alternatives.
     """
-    def _try_fetch(tab_name):
+    SHEET_ID = "1_eWq5Mx9zBfKfkqP56wqH3uLnwbv3k714t0dztzOEo4"
+
+    def _is_progress_df(df):
+        """Return True only if df looks like the progress tab."""
+        has_id  = "Row_No" in df.columns or "No" in df.columns
+        has_app = "Person" in df.columns and "Week_Start" in df.columns
+        return has_id and not has_app and "Task" in df.columns
+
+    def _clean(df):
+        df.columns = [str(c).strip() for c in df.columns]
+        df = df[df.iloc[:, 0].notna()].copy()
+        df = df[~df.iloc[:, 0].astype(str).str.startswith("Last refreshed")].copy()
+        return df
+
+    # ── Strategy 1: gviz endpoint (best — resolves names correctly) ──────
+    for name in ("progress", "Progress", "PROGRESS"):
+        url = (f"https://docs.google.com/spreadsheets/d/{SHEET_ID}"
+               f"/gviz/tq?tqx=out:csv&sheet={name}")
         try:
-            df = pd.read_csv(sheet_url(tab_name), dtype=str, on_bad_lines="skip")
-            if df.empty:
-                return None
-            df.columns = [str(c).strip() for c in df.columns]
-            df = df[df.iloc[:, 0].notna()].copy()
-            df = df[~df.iloc[:, 0].astype(str).str.startswith("Last refreshed")].copy()
-            # Valid progress tab: has Row_No or No column AND no Person column
-            has_id  = "Row_No" in df.columns or "No" in df.columns
-            has_app = "Person" in df.columns and "Week_Start" in df.columns
-            if has_id and not has_app and "Task" in df.columns:
-                return df
-            return None
-        except:
-            return None
+            df = pd.read_csv(url, dtype=str, on_bad_lines="skip")
+            if df.empty: continue
+            df = _clean(df)
+            if _is_progress_df(df):
+                # Parse numbers and return
+                for col in ["Total_Required", "Completed", "Remaining"]:
+                    if col in df.columns:
+                        df[col] = df[col].apply(lambda v: safe_num(v, False))
+                if "Pct_Done" in df.columns:
+                    df["Pct_Done"] = df["Pct_Done"].apply(lambda v: safe_num(v, False))
+                return df, None
+        except Exception:
+            continue
 
-    # Try lowercase, capitalised, uppercase
-    df = _try_fetch("progress") or _try_fetch("Progress") or _try_fetch("PROGRESS")
-
-    if df is None:
+    # ── Strategy 2: export URL with name variants ────────────────────────
+    for name in ("progress", "Progress", "PROGRESS"):
+        url = (f"https://docs.google.com/spreadsheets/d/{SHEET_ID}"
+               f"/export?format=csv&sheet={name}")
         try:
-            raw  = pd.read_csv(sheet_url("progress"), dtype=str, on_bad_lines="skip")
-            cols = raw.columns.tolist()[:6] if not raw.empty else []
-        except:
-            cols = []
-        return None, (
-            f"Could not find the progress tab.\n\n"
-            f"Columns received from 'progress' URL: `{cols}`\n\n"
-            f"**Steps to fix:**\n"
-            f"1. Run **PushProgressSheet** (or **PushAll**) in Excel\n"
-            f"2. Confirm the tab is named **progress** (lowercase) in Google Sheets\n"
-            f"3. Click **🔄 Clear Cache & Reload** in sidebar"
-        )
+            df = pd.read_csv(url, dtype=str, on_bad_lines="skip")
+            if df.empty: continue
+            df = _clean(df)
+            if _is_progress_df(df):
+                for col in ["Total_Required", "Completed", "Remaining"]:
+                    if col in df.columns:
+                        df[col] = df[col].apply(lambda v: safe_num(v, False))
+                if "Pct_Done" in df.columns:
+                    df["Pct_Done"] = df["Pct_Done"].apply(lambda v: safe_num(v, False))
+                return df, None
+        except Exception:
+            continue
 
-    for col in ["Total_Required", "Completed", "Remaining"]:
-        if col in df.columns:
-            df[col] = df[col].apply(lambda v: safe_num(v, False))
-    if "Pct_Done" in df.columns:
-        df["Pct_Done"] = df["Pct_Done"].apply(lambda v: safe_num(v, False))
-
-    return df, None
+    return None, (
+        "Could not load the **progress** tab.\n\n"
+        "**Check in Google Sheets that:**\n"
+        "1. The tab exists and is named exactly `progress` (lowercase)\n"
+        "2. **PushProgressSheet** has been run in Excel\n"
+        "3. The sheet is shared as *Anyone with the link → Viewer*\n\n"
+        "The progress tab should have columns: `Row_No, Task, Total_Required, Completed...`"
+    )
 
 # ── Individual crew view ──────────────────────────────────────────────────────
 
