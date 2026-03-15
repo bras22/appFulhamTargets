@@ -290,19 +290,23 @@ def render_taskview():
         st.warning(f"No data for **{sel_task}** week `{sel_week}`."); return
     df_tv["Pct_Completion"] = df_tv.apply(
         lambda r: r["Wk_Achieved"]/r["Wk_Target_Real"]*100 if r["Wk_Target_Real"]>0 else 0.0, axis=1)
-    wk_tgt_pp    = safe_num(df_tv["Wk_Target_Theo"].iloc[0]) if "Wk_Target_Theo" in df_tv.columns \
-                   else safe_num(df_tv["Wk_Target_Real"].iloc[0])
+    # Task_Wk_Target = tTpd × 5.5 = total weekly target for the whole task (= G7 in Excel TASK VIEW)
+    # Wk_Target_Theo = per-crew individual weekly target = tTpd/tPplPlan × 5.5
+    task_wk_tgt  = safe_num(df_tv["Task_Wk_Target"].iloc[0]) if "Task_Wk_Target" in df_tv.columns else 0
+    wk_tgt_pp    = safe_num(df_tv["Wk_Target_Theo"].iloc[0]) if "Wk_Target_Theo" in df_tv.columns                    else safe_num(df_tv["Wk_Target_Real"].iloc[0])
     active_count = len(df_tv[df_tv["Wk_Achieved"]>0])
     team_total   = df_tv["Wk_Achieved"].sum()
+    team_pct     = (team_total / task_wk_tgt * 100) if task_wk_tgt > 0 else 0.0
     days_left    = int(df_tv["Days_To_Deadline"].iloc[0]) if "Days_To_Deadline" in df_tv.columns else 0
-    _,_,ccls_t   = status_info(team_total/wk_tgt_pp*100/max(active_count,1) if wk_tgt_pp>0 else 0)
+    _,_,ccls_t   = status_info(team_pct)
     c1,c2,c3,c4 = st.columns(4)
     with c1: st.markdown(f'<div class="summary-card"><div class="label">Task</div><div class="value blue" style="font-size:1rem;padding-top:.5rem;">{sel_task}</div></div>',unsafe_allow_html=True)
-    with c2: st.markdown(f'<div class="summary-card"><div class="label">Team Total This Week</div><div class="value green">{team_total:.0f}</div></div>',unsafe_allow_html=True)
-    with c3: st.markdown(f'<div class="summary-card"><div class="label">Target / Crew (weekly)</div><div class="value blue">{wk_tgt_pp:.0f}</div></div>',unsafe_allow_html=True)
-    with c4: st.markdown(f'<div class="summary-card"><div class="label">Active Crew · Days Left</div><div class="value grey" style="font-size:1.4rem;">{active_count} crew · {days_left}d</div></div>',unsafe_allow_html=True)
+    with c2: st.markdown(f'<div class="summary-card"><div class="label">Team Total This Week</div><div class="value {ccls_t}">{team_total:.0f}</div></div>',unsafe_allow_html=True)
+    with c3: st.markdown(f'<div class="summary-card"><div class="label">Weekly Target (Task)</div><div class="value blue">{task_wk_tgt:.0f}</div></div>',unsafe_allow_html=True)
+    with c4: st.markdown(f'<div class="summary-card"><div class="label">Team Completion</div><div class="value {ccls_t}">{team_pct:.1f}%</div></div>',unsafe_allow_html=True)
     st.markdown("<br>",unsafe_allow_html=True)
-    st.caption(f"Target per crew: **{wk_tgt_pp:.0f}** units  ·  Active crew: **{active_count}**  ·  Days to deadline: **{days_left}**")
+    st.markdown(prog_bar(team_pct),unsafe_allow_html=True)
+    st.caption(f"Weekly task target: **{task_wk_tgt:.0f}**  ·  Target per crew: **{wk_tgt_pp:.0f}**  ·  Active: **{active_count}** crew  ·  Days to deadline: **{days_left}**")
     st.markdown("---")
     active_crew   = df_tv[df_tv["Wk_Achieved"]>0].sort_values("Pct_Completion",ascending=False)
     inactive_crew = df_tv[df_tv["Wk_Achieved"]==0].sort_values("Person")
