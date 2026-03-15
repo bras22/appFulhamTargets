@@ -35,9 +35,6 @@ st.markdown("""
     .badge-border { background:#6b5a00; color:#ffe57d; }
     .badge-stay   { background:#6b1a1a; color:#ff8a8a; }
     .badge-nodata { background:#333;    color:#aaa; }
-    .badge-track  { background:#1a4b6b; color:#7ddfff; }
-    .badge-risk   { background:#6b4a00; color:#ffc87d; }
-    .badge-behind { background:#6b1a1a; color:#ff8a8a; }
     .green { color:#4dff91; } .amber { color:#ffd54f; }
     .red   { color:#ff6b6b; } .grey  { color:#888; }
     .blue  { color:#7ddfff; }
@@ -97,29 +94,48 @@ def parse_date_to_iso(v):
     except: return None
 
 def safe_num(v, is_daily=False):
+    """
+    Parse numeric values that may be corrupted by European locale CStr() in VBA.
+    E.g. 95.9999 → CStr → "95,9999" → Google Sheets → 959999... → CSV → "959.999.999..."
+    The VBA fix (using Str() instead of CStr()) eliminates this going forward.
+    This function handles both clean and legacy corrupted values.
+    """
     if v is None: return 0.0
     s = str(v).strip()
     if not s or s.lower() in ("nan", "—", "-", ""): return 0.0
     if s.endswith("%"):
         try:    return float(s[:-1]) / 100.0
         except: return 0.0
+    # Detect European-thousands-corrupted format: 2+ dots
     if s.count(".") >= 2:
         digits = s.replace(".", "")
         try:
             val = float(digits) / 1e12
-            if is_daily and val > 500: val = val / 10.0
+            # Daily columns: if > 500 units/person/day → 10× too large
+            if is_daily and val > 500:
+                val = val / 10.0
             return val
         except: pass
     try:    return float(s)
     except: return 0.0
 
-def progress_status(status_str):
-    s = str(status_str).strip()
-    if "On Track"  in s: return "badge-track",  "🟢"
-    elif "At Risk"  in s: return "badge-risk",   "🟡"
-    elif "Complete" in s: return "badge-go",     "✅"
-    elif "Stalled"  in s: return "badge-risk",   "⚠️"
-    else:                 return "badge-behind",  "🔴"
+def fix_10x(ach, tgt):
+    """
+    Detect and fix Wk_Achieved values corrupted 10× by legacy CStr() VBA.
+    Condition: achieved > 5% over target AND achieved÷10 is at or below target.
+    The new VBA (using Str()) eliminates this going forward.
+    """
+    if tgt > 0 and ach > tgt * 1.05 and (ach / 10.0) <= tgt:
+        return ach / 10.0
+    return ach
+
+def task_status_style(status):
+    s = str(status)
+    if "On Track"    in s: return "green",  "🟢"
+    elif "At Risk"   in s: return "amber",  "🟡"
+    elif "Behind"    in s: return "red",    "🔴"
+    elif "No QField" in s: return "grey",   "⚪"
+    else:                  return "grey",   "⚪"
 
 # ── Data loading ──────────────────────────────────────────────────────────────
 
@@ -152,22 +168,14 @@ def load_crew_data():
         if col in df.columns: df[col] = df[col].apply(lambda v: safe_num(v, True))
     for col in ["Wk_Achieved","Wk_Target_Real","Wk_Target_Theo","Pct_Real","Remaining_Units","Days_To_Deadline"]:
         if col in df.columns: df[col] = df[col].apply(lambda v: safe_num(v, False))
-    # Fix: Wk_Achieved values like 96 can be corrupted to 960 by the
-    # European-locale CStr() issue. If Wk_Achieved is > 1.5× target but
-    # Wk_Achieved÷10 is ≤ 1.5× target, the value is 10× too large.
-    if "Wk_Target_Real" in df.columns and "Wk_Achieved" in df.columns:
-        def fix_achieved(r):
-            ach = r["Wk_Achieved"]
-            tgt = r["Wk_Target_Real"]
-            if tgt > 0 and ach > tgt * 1.5 and (ach / 10) <= tgt * 1.5:
-                return ach / 10.0
-            return ach
-        df["Wk_Achieved"] = df.apply(fix_achieved, axis=1)
-    # Also fix daily columns the same way (cap at 3× day target heuristic)
+    # Fix 10× corruption on Wk_Achieved (legacy CStr() VBA issue)
+    if "Wk_Achieved" in df.columns and "Wk_Target_Real" in df.columns:
+        df["Wk_Achieved"] = df.apply(
+            lambda r: fix_10x(r["Wk_Achieved"], r["Wk_Target_Real"]), axis=1)
+    # Also clamp daily columns: no realistic single-person daily > 700
     for col in ["Mon","Tue","Wed","Thu","Fri","Sat"]:
         if col in df.columns:
             df[col] = df[col].apply(lambda v: v / 10.0 if v > 700 else v)
-
     df["Pct_Real"] = df.apply(
         lambda r: r["Wk_Achieved"] / r["Wk_Target_Real"] if r["Wk_Target_Real"] > 0 else 0.0, axis=1)
     df["Person"]       = df["Person"].astype(str).str.strip()
@@ -175,46 +183,44 @@ def load_crew_data():
     df["Sat_Decision"] = df.get("Sat_Decision", pd.Series(["No data"]*len(df))).astype(str).str.strip()
     return df, None
 
-@st.cache_data(ttl=300)
-def load_progress_data():
-    df, err = load_tab("progress")
-    if df is None: return None, err
+@st.cache_data(ttl=60)   # Shorter TTL + separate cache key from load_tab
+def load_progress_fresh():
+    """
+    Direct fetch of the progress tab — uses its own cache key so it
+    is never confused with load_tab("app") even if both return similar data.
+    Validates columns before returning.
+    """
+    try:
+        df = pd.read_csv(sheet_url("progress"), dtype=str, on_bad_lines="skip")
+    except Exception as e:
+        return None, f"Could not fetch progress tab: {e}"
 
-    # Guard: detect wrong-tab scenario (Google Sheets returns first tab
-    # silently when requested tab name doesn't match).
-    # Progress tab must have Row_No or No column — app tab has Person.
-    has_progress_cols = ("Row_No" in df.columns or "No" in df.columns or
-                         ("Task" in df.columns and "Person" not in df.columns))
-    if not has_progress_cols:
+    if df.empty:
+        return None, "progress tab is empty — run PushProgressSheet in Excel first."
+
+    df.columns = [str(c).strip() for c in df.columns]
+    df = df[df.iloc[:, 0].notna()].copy()
+
+    # Validate it's the right tab — must have Row_No or No, must NOT have Person
+    is_app_tab = "Person" in df.columns and "Row_No" not in df.columns and "No" not in df.columns
+    if is_app_tab:
         return None, (
-            "progress tab returned wrong data (got app tab instead).\n"
-            "Click **🔄 Clear Cache & Reload** then try again.\n"
-            f"Columns received: {df.columns.tolist()[:6]}"
+            "progress tab not pushed yet — Google Sheets is returning the app tab instead.\n"
+            "Run **PushProgressSheet** (or **PushAll**) in Excel, then click "
+            "**🔄 Clear Cache & Reload** in the sidebar."
         )
-
     if "Task" not in df.columns:
-        return None, f"progress tab missing Task column. Columns: {df.columns.tolist()}"
+        return None, f"progress tab missing Task column. Columns found: {df.columns.tolist()}"
 
-    # Skip the OVERALL SUMMARY row
-    row_id_col = None
-    if "Row_No" in df.columns: row_id_col = "Row_No"
-    elif "No"   in df.columns: row_id_col = "No"
+    df = df[~df.iloc[:, 0].astype(str).str.startswith("Last refreshed")].copy()
 
-    if row_id_col:
-        df = df[df[row_id_col].astype(str).str.strip() != "0"].copy()
-    else:
-        df = df[~df["Task"].astype(str).str.contains("OVERALL", case=False, na=False)].copy()
-
-    df = df[df["Task"].astype(str).str.strip() != ""].copy()
-
-    # Parse numeric cols — values like "312.656.978.830.283" are the
-    # European-thousands-corrupted percentage (e.g. 0.3127 stored as fraction).
-    # Total_Required / Completed / Remaining are plain integers — safe_num handles both.
+    # Parse numeric columns
     for col in ["Total_Required", "Completed", "Remaining"]:
         if col in df.columns:
-            df[col] = df[col].apply(lambda v: safe_num(v, is_daily=False))
+            df[col] = df[col].apply(lambda v: safe_num(v, False))
     if "Pct_Done" in df.columns:
-        df["Pct_Done"] = df["Pct_Done"].apply(lambda v: safe_num(v, is_daily=False))
+        # Stored as fraction (0.313) — corrupted looks like "312.656..." → safe_num → 0.313 ✓
+        df["Pct_Done"] = df["Pct_Done"].apply(lambda v: safe_num(v, False))
 
     return df, None
 
@@ -346,9 +352,9 @@ def render_team(df_week, week_label_str):
                 f'<span class="badge {badge}">{lbl}</span>'
                 f'</div>', unsafe_allow_html=True)
 
-# ── Management: TASK VIEW (built from app tab — all tasks always available) ───
+# ── Task View (public — no password) ─────────────────────────────────────────
 
-def render_mgmt_taskview():
+def render_taskview():
     st.markdown("## 🔧 Task View — All Crew Breakdown")
 
     df_app, err = load_crew_data()
@@ -398,7 +404,7 @@ def render_mgmt_taskview():
         st.markdown(f'<div class="summary-card"><div class="label">Team Total This Week</div>'
                     f'<div class="value {ccls_t}">{team_total:.0f}</div></div>', unsafe_allow_html=True)
     with c3:
-        st.markdown(f'<div class="summary-card"><div class="label">Target / Person</div>'
+        st.markdown(f'<div class="summary-card"><div class="label">Target / Crew</div>'
                     f'<div class="value blue">{wk_tgt_pp:.0f}</div></div>', unsafe_allow_html=True)
     with c4:
         st.markdown(f'<div class="summary-card"><div class="label">Team Completion</div>'
@@ -406,7 +412,7 @@ def render_mgmt_taskview():
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown(prog_bar(team_pct), unsafe_allow_html=True)
-    st.caption(f"Target per person: **{wk_tgt_pp:.0f}** units  ·  Days to deadline: **{days_left}**")
+    st.caption(f"Target per crew: **{wk_tgt_pp:.0f}** units  ·  Days to deadline: **{days_left}**")
     st.markdown("---")
 
     active_crew   = df_tv[df_tv["Wk_Achieved"] > 0].sort_values("Pct_Completion", ascending=False)
@@ -457,83 +463,61 @@ def render_mgmt_taskview():
 def render_mgmt_progress():
     st.markdown("## 📊 Project Progress")
 
-    df, err = load_progress_data()
+    df, err = load_progress_fresh()
     if df is None:
-        if "wrong data" in str(err) or "got app tab" in str(err):
-            st.error(
-                "⚠️ The progress tab has stale cached data from a previous session.\n\n"
-                "**Click the button below to reload:**"
-            )
-            if st.button("🔄 Clear Cache & Reload Now", type="primary"):
-                st.cache_data.clear()
-                st.rerun()
-        else:
-            st.warning(
-                f"Progress data not available yet.\n\n"
-                f"Run **PushProgressSheet** (or **PushAll**) in Excel first.\n\n`{err}`"
-            )
+        st.warning(f"**{err}**")
+        if st.button("🔄 Clear Cache & Reload", type="primary"):
+            st.cache_data.clear()
+            st.rerun()
         return
 
-    # ── Parse all numeric columns robustly ───────────────────
-    # Values from Excel may arrive as plain integers (22296),
-    # fractions (0.313), or European-corrupted strings (22.296.000).
-    for col in ["Total_Required", "Completed", "Remaining"]:
-        if col in df.columns:
-            df[col] = df[col].apply(lambda v: safe_num(v, is_daily=False))
+    # Separate overall summary row from task rows
+    row_id_col = "Row_No" if "Row_No" in df.columns else ("No" if "No" in df.columns else None)
 
-    if "Pct_Done" in df.columns:
-        # Stored as fraction 0.313 — convert to display %
-        df["Pct_Done"] = df["Pct_Done"].apply(lambda v: safe_num(v, is_daily=False))
+    overall_df = pd.DataFrame()
+    task_df    = df.copy()
 
-    # ── Overall summary row ───────────────────────────────────
-    df_raw, _ = load_tab("progress")
-    overall = pd.DataFrame()
-    if df_raw is not None and "Person" not in df_raw.columns:
-        # Only use if it's actually the progress tab (not app tab)
-        if "Row_No" in df_raw.columns:
-            overall = df_raw[df_raw["Row_No"].astype(str).str.strip() == "0"]
-        elif "No" in df_raw.columns:
-            overall = df_raw[df_raw["No"].astype(str).str.strip() == "0"]
-        if len(overall) == 0 and "Task" in df_raw.columns:
-            overall = df_raw[df_raw["Task"].astype(str).str.contains("OVERALL", case=False, na=False)]
+    if row_id_col:
+        overall_df = df[df[row_id_col].astype(str).str.strip() == "0"]
+        task_df    = df[df[row_id_col].astype(str).str.strip() != "0"].copy()
+    elif "Task" in df.columns:
+        overall_df = df[df["Task"].astype(str).str.contains("OVERALL", case=False, na=False)]
+        task_df    = df[~df["Task"].astype(str).str.contains("OVERALL", case=False, na=False)].copy()
 
-    total_req  = 0.0; total_done = 0.0; total_rem = 0.0
-    ov_pct     = 0.0; deadline   = "";  days_left = ""
+    task_df = task_df[task_df["Task"].astype(str).str.strip() != ""].copy()
 
-    if len(overall):
-        or_        = overall.iloc[0]
+    # ── Summary cards ─────────────────────────────────────────
+    total_req = 0.0; total_done = 0.0; total_rem = 0.0; ov_pct = 0.0
+    deadline  = "";  days_left  = ""
+
+    if len(overall_df):
+        or_ = overall_df.iloc[0]
         total_req  = safe_num(or_.get("Total_Required", 0))
         total_done = safe_num(or_.get("Completed", 0))
         total_rem  = safe_num(or_.get("Remaining", 0))
         ov_pct     = safe_num(or_.get("Pct_Done", 0)) * 100
         deadline   = str(or_.get("Deadline", ""))
         days_left  = str(or_.get("Days_Left", "")).replace("DAYS TO DEADLINE:", "").strip()
-    else:
-        # Calculate from task rows if overall row missing
-        total_req  = df["Total_Required"].sum() if "Total_Required" in df.columns else 0.0
-        total_done = df["Completed"].sum()      if "Completed"      in df.columns else 0.0
+    elif len(task_df):
+        total_req  = task_df["Total_Required"].sum() if "Total_Required" in task_df.columns else 0
+        total_done = task_df["Completed"].sum()      if "Completed"      in task_df.columns else 0
         total_rem  = total_req - total_done
-        ov_pct     = (total_done / total_req * 100) if total_req > 0 else 0.0
+        ov_pct     = (total_done / total_req * 100)  if total_req > 0 else 0.0
 
-    # ── Summary cards ─────────────────────────────────────────
     clr_pct = "green" if ov_pct >= 80 else ("amber" if ov_pct >= 40 else "red")
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.markdown(
-            f'''<div class="summary-card"><div class="label">Total Required</div>
-<div class="value blue">{total_req:,.0f}</div></div>''', unsafe_allow_html=True)
+        st.markdown(f'<div class="summary-card"><div class="label">Total Required</div>'
+                    f'<div class="value blue">{total_req:,.0f}</div></div>', unsafe_allow_html=True)
     with c2:
-        st.markdown(
-            f'''<div class="summary-card"><div class="label">Completed</div>
-<div class="value green">{total_done:,.0f}</div></div>''', unsafe_allow_html=True)
+        st.markdown(f'<div class="summary-card"><div class="label">Completed</div>'
+                    f'<div class="value green">{total_done:,.0f}</div></div>', unsafe_allow_html=True)
     with c3:
-        st.markdown(
-            f'''<div class="summary-card"><div class="label">Remaining</div>
-<div class="value amber">{total_rem:,.0f}</div></div>''', unsafe_allow_html=True)
+        st.markdown(f'<div class="summary-card"><div class="label">Remaining</div>'
+                    f'<div class="value amber">{total_rem:,.0f}</div></div>', unsafe_allow_html=True)
     with c4:
-        st.markdown(
-            f'''<div class="summary-card"><div class="label">Overall % Done</div>
-<div class="value {clr_pct}">{ov_pct:.1f}%</div></div>''', unsafe_allow_html=True)
+        st.markdown(f'<div class="summary-card"><div class="label">Overall % Done</div>'
+                    f'<div class="value {clr_pct}">{ov_pct:.1f}%</div></div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown(prog_bar(ov_pct), unsafe_allow_html=True)
@@ -547,94 +531,80 @@ def render_mgmt_progress():
 
     st.markdown("---")
 
-    # ── Per-task cards ─────────────────────────────────────────
-    # Status colours and icons
-    def task_status_style(status):
-        s = str(status)
-        if "On Track"    in s: return "green",  "🟢"
-        elif "At Risk"   in s: return "amber",  "🟡"
-        elif "Behind"    in s: return "red",    "🔴"
-        elif "No QField" in s: return "grey",   "⚪"
-        else:                  return "grey",   "⚪"
-
-    # Lay out tasks in 2-column grid
-    task_rows = [row for _, row in df.iterrows()
+    # ── Per-task cards in 2-column grid ───────────────────────
+    task_rows = [row for _, row in task_df.iterrows()
                  if str(row.get("Task","")).strip() not in ("","nan")]
 
     for i in range(0, len(task_rows), 2):
         cols = st.columns(2)
         for col_idx, row in enumerate(task_rows[i:i+2]):
             task      = str(row.get("Task",""))
-            req       = row["Total_Required"]   if "Total_Required" in df.columns else 0
-            done      = row["Completed"]        if "Completed"      in df.columns else 0
-            rem       = row["Remaining"]        if "Remaining"      in df.columns else 0
-            pct_raw   = row["Pct_Done"]         if "Pct_Done"       in df.columns else 0
-            pct       = pct_raw * 100           # stored as fraction
+            req       = float(row.get("Total_Required", 0))
+            done      = float(row.get("Completed", 0))
+            pct       = float(row.get("Pct_Done", 0)) * 100
             rate_2wk  = str(row.get("Rate_2wk",  "—"))
             reqd_rate = str(row.get("Reqd_Rate",  "—"))
             proj_fin  = str(row.get("Proj_Finish","—"))
             status    = str(row.get("Status",     "—"))
-            row_no    = str(row.get("Row_No", row.get("No", "")))
+            row_no    = str(row.get(row_id_col, "")) if row_id_col else ""
 
             clr, icon = task_status_style(status)
-            cap       = min(float(pct), 100)
-            bar_c     = "#4dff91" if pct >= 80 else ("#ffd54f" if pct >= 50 else "#ff6b6b")
+            bar_clr   = "#4dff91" if pct >= 80 else ("#ffd54f" if pct >= 50 else "#ff6b6b")
+            cap       = min(pct, 100)
+            txt_clr   = "#4dff91" if clr=="green" else "#ffd54f" if clr=="amber" else "#ff6b6b" if clr=="red" else "#888"
 
-            # Skip tasks with no QField data — show greyed card
-            no_data = "No QField" in status or done == 0 and req > 0 and pct == 0
+            # Format projected finish date
+            proj_fin_fmt = fmt_date(parse_date_to_iso(proj_fin)) if proj_fin not in ("?","—","") else proj_fin
 
             with cols[col_idx]:
                 st.markdown(f"""
 <div style="background:#1e1e2e;border-radius:10px;padding:1.2rem;
-            border:1px solid rgba(255,255,255,0.08);margin-bottom:1rem;">
+     border:1px solid rgba(255,255,255,0.08);margin-bottom:1rem;">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.6rem;">
-    <span style="font-weight:700;font-size:0.95rem;color:#e0e0e0;">
-      {row_no}. {task}
-    </span>
-    <span style="font-size:0.8rem;font-weight:700;color:{'#4dff91' if clr=='green' else '#ffd54f' if clr=='amber' else '#ff6b6b' if clr=='red' else '#888'};">
-      {icon} {status}
-    </span>
+    <span style="font-weight:700;font-size:0.95rem;color:#e0e0e0;">{row_no}. {task}</span>
+    <span style="font-size:0.8rem;font-weight:700;color:{txt_clr};">{icon} {status}</span>
   </div>
-  <div style="background:#2a2a3e;border-radius:6px;height:10px;overflow:hidden;margin-bottom:0.6rem;">
-    <div style="width:{cap:.1f}%;height:100%;background:{bar_c};border-radius:6px;"></div>
+  <div style="background:#2a2a3e;border-radius:6px;height:10px;overflow:hidden;margin-bottom:0.7rem;">
+    <div style="width:{cap:.1f}%;height:100%;background:{bar_clr};border-radius:6px;"></div>
   </div>
-  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.3rem;font-size:0.8rem;text-align:center;margin-bottom:0.5rem;">
-    <div><span style="color:#aaa;display:block;">Required</span>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.3rem;font-size:0.82rem;text-align:center;margin-bottom:0.5rem;">
+    <div><span style="color:#aaa;display:block;font-size:0.75rem;">Required</span>
          <span style="font-weight:700;color:#7ddfff;">{req:,.0f}</span></div>
-    <div><span style="color:#aaa;display:block;">Done</span>
+    <div><span style="color:#aaa;display:block;font-size:0.75rem;">Completed</span>
          <span style="font-weight:700;color:#4dff91;">{done:,.0f}</span></div>
-    <div><span style="color:#aaa;display:block;">% Done</span>
-         <span style="font-weight:700;color:{'#4dff91' if pct>=80 else '#ffd54f' if pct>=40 else '#ff6b6b'};">{pct:.1f}%</span></div>
+    <div><span style="color:#aaa;display:block;font-size:0.75rem;">% Done</span>
+         <span style="font-weight:700;color:{txt_clr};">{pct:.1f}%</span></div>
   </div>
   <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.3rem;font-size:0.78rem;text-align:center;">
-    <div><span style="color:#aaa;display:block;">Rate/day</span>
+    <div><span style="color:#aaa;display:block;font-size:0.72rem;">Rate/day</span>
          <span style="color:#e0e0e0;">{rate_2wk}</span></div>
-    <div><span style="color:#aaa;display:block;">Req'd Rate</span>
+    <div><span style="color:#aaa;display:block;font-size:0.72rem;">Req'd Rate</span>
          <span style="color:#e0e0e0;">{reqd_rate}</span></div>
-    <div><span style="color:#aaa;display:block;">Proj. Finish</span>
-         <span style="color:#e0e0e0;">{proj_fin}</span></div>
+    <div><span style="color:#aaa;display:block;font-size:0.72rem;">Proj. Finish</span>
+         <span style="color:#e0e0e0;">{proj_fin_fmt}</span></div>
   </div>
 </div>
 """, unsafe_allow_html=True)
 
-    # ── Detail expanders ──────────────────────────────────────
-    if "Explanation" in df.columns:
+    # ── Explanation expanders ─────────────────────────────────
+    if "Explanation" in task_df.columns:
         st.markdown("---")
-        st.subheader("📝 Calculation Detail")
-        for _, row in df.iterrows():
-            status_str = str(row.get("Status",""))
-            _, icon    = task_status_style(status_str)
-            task       = str(row.get("Task",""))
+        st.subheader("📝 Detail per Task")
+        for _, row in task_df.iterrows():
+            s = str(row.get("Status",""))
+            _, icon = task_status_style(s)
+            task = str(row.get("Task",""))
             if not task or task.lower() in ("nan",""):
                 continue
-            with st.expander(f"{icon} **{task}** — {status_str}"):
+            with st.expander(f"{icon} **{task}** — {s}"):
                 expl = str(row.get("Explanation","")).replace(" | ","\n")
                 st.code(expl, language=None)
+
+# ── PIN gate ──────────────────────────────────────────────────────────────────
 
 def render_pin_gate():
     if st.session_state.get("mgmt_auth", False):
         return True
-
     st.markdown("""
     <div class="pin-box">
         <h2>🔒 Management Access</h2>
@@ -642,7 +612,6 @@ def render_pin_gate():
         Enter the 4-digit PIN to continue.</p>
     </div>
     """, unsafe_allow_html=True)
-
     col = st.columns([1, 1, 1])[1]
     with col:
         pin = st.text_input("PIN", type="password", max_chars=4,
@@ -664,7 +633,12 @@ def main():
     df, err = load_crew_data()
 
     st.sidebar.title("🔍 Navigation")
-    view = st.sidebar.radio("View", ["👤 Individual", "👥 Team Overview", "🔒 Management"])
+    view = st.sidebar.radio("View", [
+        "👤 Individual",
+        "👥 Team Overview",
+        "🔧 Task View",
+        "🔒 Management"
+    ])
 
     sel_week = None; sel_week_lbl = ""; sel_person = None
     week_labels = {}; persons = []; latest = ""
@@ -710,28 +684,28 @@ def main():
         f'  ·  {len(persons)} crew members</p>'
         f'</div>', unsafe_allow_html=True)
 
+    # ── Task View (public, no PIN) ────────────────────────────
+    if view == "🔧 Task View":
+        render_taskview()
+        return
+
+    # ── Management (PIN protected) ────────────────────────────
     if view == "🔒 Management":
         if not render_pin_gate():
             return
-
         st.markdown(
             '<div class="mgmt-header">'
             '<span style="font-size:1.2rem;font-weight:700;">🔒 Management Dashboard</span>'
             '<span style="font-size:0.85rem;opacity:0.7;">Restricted access</span>'
             '</div>', unsafe_allow_html=True)
-
-        mgmt_tab = st.radio("Section", ["🔧 Task View", "📊 Project Progress"], horizontal=True)
-        if mgmt_tab == "🔧 Task View":
-            render_mgmt_taskview()
-        else:
-            render_mgmt_progress()
-
+        render_mgmt_progress()
         st.markdown("---")
         if st.button("🔒 Lock Management Area"):
             st.session_state["mgmt_auth"] = False
             st.rerun()
         return
 
+    # ── Public views ──────────────────────────────────────────
     if df is None:
         st.error(f"Could not load crew data.\n\n`{err}`\n\n"
                  "Check the sheet is shared and PushAll has been run.")
