@@ -138,7 +138,8 @@ def _read_csv_tab(url):
 
 @st.cache_data(ttl=300)
 def load_crew_data():
-    df = _read_csv_tab(gviz_url("app")) or _read_csv_tab(export_url("app"))
+    df = _read_csv_tab(gviz_url("app"))
+    if df is None: df = _read_csv_tab(export_url("app"))
     if df is None: return None, "Could not fetch app tab"
     if "Person" not in df.columns:
         return None, f"Person column missing. Got: {df.columns.tolist()[:6]}"
