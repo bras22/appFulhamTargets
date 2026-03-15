@@ -154,12 +154,19 @@ def load_crew_data():
         if col in df.columns: df[col] = df[col].apply(lambda v: safe_num(v, True))
     for col in ["Wk_Achieved","Wk_Target_Real","Wk_Target_Theo","Pct_Real","Remaining_Units","Days_To_Deadline"]:
         if col in df.columns: df[col] = df[col].apply(lambda v: safe_num(v, False))
-    # Fix 10× corruption on weekly totals (legacy CStr() VBA — new Str() VBA eliminates this)
-    if "Wk_Achieved" in df.columns and "Wk_Target_Real" in df.columns:
-        df["Wk_Achieved"] = df.apply(lambda r: fix_10x(r["Wk_Achieved"], r["Wk_Target_Real"]), axis=1)
-    for col in ["Mon","Tue","Wed","Thu","Fri","Sat"]:
-        if col in df.columns:
-            df[col] = df[col].apply(lambda v: v / 10.0 if v > 700 else v)
+    # Defensive fix for any pre-VBA-fix data still in the sheet.
+    # Once the updated VBA (NumStr with locale-safe decimal) is used,
+    # this correction will never trigger since values will be clean.
+    if "Wk_Target_Real" in df.columns:
+        def fix_row_values(row):
+            tgt = row["Wk_Target_Real"]
+            if "Wk_Achieved" in row.index:
+                row["Wk_Achieved"] = fix_10x(row["Wk_Achieved"], tgt)
+            for col in ["Mon","Tue","Wed","Thu","Fri","Sat"]:
+                if col in row.index and tgt > 0 and row[col] > tgt * 1.05 and (row[col] / 10.0) <= tgt:
+                    row[col] = row[col] / 10.0
+            return row
+        df = df.apply(fix_row_values, axis=1)
     df["Pct_Real"] = df.apply(
         lambda r: r["Wk_Achieved"] / r["Wk_Target_Real"] if r["Wk_Target_Real"] > 0 else 0.0, axis=1)
     df["Person"]       = df["Person"].astype(str).str.strip()
@@ -204,9 +211,10 @@ def load_progress_data():
                 for col in ["Total_Required", "Completed", "Remaining"]:
                     if col in df.columns:
                         df[col] = df[col].apply(lambda v: safe_num(v, False))
-                if "Pct_Done" in df.columns:
-                    df["Pct_Done"] = df["Pct_Done"].apply(lambda v: safe_num(v, False))
-                return df, None
+                # Pct_Done recalculated from integers (stored value unreliable)
+                if "Total_Required" in df.columns and "Completed" in df.columns:
+                    df["Pct_Done"] = df.apply(
+                        lambda r: r["Completed"] / r["Total_Required"] if r["Total_Required"] > 0 else 0.0, axis=1)
         except Exception:
             continue
 
@@ -222,9 +230,10 @@ def load_progress_data():
                 for col in ["Total_Required", "Completed", "Remaining"]:
                     if col in df.columns:
                         df[col] = df[col].apply(lambda v: safe_num(v, False))
-                if "Pct_Done" in df.columns:
-                    df["Pct_Done"] = df["Pct_Done"].apply(lambda v: safe_num(v, False))
-                return df, None
+                # Pct_Done recalculated from integers (stored value unreliable)
+                if "Total_Required" in df.columns and "Completed" in df.columns:
+                    df["Pct_Done"] = df.apply(
+                        lambda r: r["Completed"] / r["Total_Required"] if r["Total_Required"] > 0 else 0.0, axis=1)
         except Exception:
             continue
 
@@ -501,7 +510,7 @@ def render_mgmt_progress():
         total_req  = safe_num(or_.get("Total_Required", 0))
         total_done = safe_num(or_.get("Completed", 0))
         total_rem  = safe_num(or_.get("Remaining", 0))
-        ov_pct     = safe_num(or_.get("Pct_Done", 0)) * 100
+        ov_pct     = (total_done / total_req * 100) if total_req > 0 else 0.0  # recalc from integers
         deadline   = str(or_.get("Deadline", ""))
         days_left  = str(or_.get("Days_Left", "")).replace("DAYS TO DEADLINE:", "").strip()
     elif len(task_df):
