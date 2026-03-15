@@ -170,32 +170,47 @@ def load_crew_data():
 # ── Progress: NEVER cached — fetched fresh every time Management is opened ───
 # Caching caused stale "wrong tab" errors that persisted even after push+reload.
 def load_progress_data():
-    """Always fetches fresh — no @st.cache_data so stale results never persist."""
-    try:
-        df = pd.read_csv(sheet_url("progress"), dtype=str, on_bad_lines="skip")
-    except Exception as e:
-        return None, f"Could not fetch progress tab: {e}"
+    """
+    Always fetches fresh — no @st.cache_data.
+    Tries multiple tab name variants to handle Google Sheets case sensitivity.
+    Google Sheets export silently returns the first sheet when the tab name
+    isn't found, so we validate the returned columns to detect that.
+    """
+    def _try_fetch(tab_name):
+        try:
+            df = pd.read_csv(sheet_url(tab_name), dtype=str, on_bad_lines="skip")
+            if df.empty:
+                return None
+            df.columns = [str(c).strip() for c in df.columns]
+            df = df[df.iloc[:, 0].notna()].copy()
+            df = df[~df.iloc[:, 0].astype(str).str.startswith("Last refreshed")].copy()
+            # Valid progress tab: has Row_No or No column AND no Person column
+            has_id  = "Row_No" in df.columns or "No" in df.columns
+            has_app = "Person" in df.columns and "Week_Start" in df.columns
+            if has_id and not has_app and "Task" in df.columns:
+                return df
+            return None
+        except:
+            return None
 
-    if df.empty:
-        return None, "progress tab is empty — run PushProgressSheet in Excel first."
+    # Try lowercase, capitalised, uppercase
+    df = _try_fetch("progress") or _try_fetch("Progress") or _try_fetch("PROGRESS")
 
-    df.columns = [str(c).strip() for c in df.columns]
-    df = df[df.iloc[:, 0].notna()].copy()
-    df = df[~df.iloc[:, 0].astype(str).str.startswith("Last refreshed")].copy()
-
-    # Detect wrong tab (Google Sheets returns first sheet when tab name not found)
-    has_progress_id = "Row_No" in df.columns or "No" in df.columns
-    has_app_cols    = "Person" in df.columns and "Week_Start" in df.columns
-    if has_app_cols and not has_progress_id:
+    if df is None:
+        try:
+            raw  = pd.read_csv(sheet_url("progress"), dtype=str, on_bad_lines="skip")
+            cols = raw.columns.tolist()[:6] if not raw.empty else []
+        except:
+            cols = []
         return None, (
-            "Google Sheets returned the app tab instead of progress.\n"
-            "This usually means PushProgressSheet hasn't been run yet.\n\n"
-            "Run **PushProgressSheet** (or **PushAll**) in Excel."
+            f"Could not find the progress tab.\n\n"
+            f"Columns received from 'progress' URL: `{cols}`\n\n"
+            f"**Steps to fix:**\n"
+            f"1. Run **PushProgressSheet** (or **PushAll**) in Excel\n"
+            f"2. Confirm the tab is named **progress** (lowercase) in Google Sheets\n"
+            f"3. Click **🔄 Clear Cache & Reload** in sidebar"
         )
-    if "Task" not in df.columns:
-        return None, f"Task column missing. Columns: {df.columns.tolist()}"
 
-    # Parse numbers — safe_num handles both clean and European-corrupted values
     for col in ["Total_Required", "Completed", "Remaining"]:
         if col in df.columns:
             df[col] = df[col].apply(lambda v: safe_num(v, False))
@@ -310,40 +325,33 @@ def render_taskview():
         lambda r: (r["Wk_Achieved"] / r["Wk_Target_Real"] * 100)
                   if r["Wk_Target_Real"] > 0 else 0.0, axis=1)
 
-    # Per-crew weekly target (individual)
-    wk_tgt_pp    = safe_num(df_tv["Wk_Target_Real"].iloc[0]) if "Wk_Target_Real" in df_tv.columns else 0
-    # Active crew count (those who actually worked this task this week)
+    # Wk_Target_Theo = per-crew plan target (stored as tTpd/tPplPlan × 5.5)
+    # This is the individual weekly plan target per crew member.
+    wk_tgt_pp    = safe_num(df_tv["Wk_Target_Theo"].iloc[0]) if "Wk_Target_Theo" in df_tv.columns                    else safe_num(df_tv["Wk_Target_Real"].iloc[0]) if "Wk_Target_Real" in df_tv.columns else 0
     active_count = len(df_tv[df_tv["Wk_Achieved"] > 0])
-    # Total team target = per-crew target × active crew count
-    team_tgt_total = wk_tgt_pp * active_count if active_count > 0 else wk_tgt_pp * len(df_tv)
     team_total   = df_tv["Wk_Achieved"].sum()
-    team_pct     = (team_total / team_tgt_total * 100) if team_tgt_total > 0 else 0.0
     days_left    = int(df_tv["Days_To_Deadline"].iloc[0]) if "Days_To_Deadline" in df_tv.columns else 0
-
-    lbl_t, badge_t, ccls_t = status_info(team_pct)
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.markdown(f'<div class="summary-card"><div class="label">Task</div>'
-                    f'<div class="value blue" style="font-size:1rem;padding-top:0.5rem;">'
-                    f'{sel_task}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'''<div class="summary-card"><div class="label">Task</div>
+<div class="value blue" style="font-size:1rem;padding-top:0.5rem;">{sel_task}</div></div>''',
+            unsafe_allow_html=True)
     with c2:
-        st.markdown(f'<div class="summary-card"><div class="label">Team Total This Week</div>'
-                    f'<div class="value {ccls_t}">{team_total:.0f}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'''<div class="summary-card"><div class="label">Team Total This Week</div>
+<div class="value green">{team_total:.0f}</div></div>''', unsafe_allow_html=True)
     with c3:
-        # Team weekly target = per-crew target × active crew (the meaningful total)
-        st.markdown(f'<div class="summary-card"><div class="label">Target (Active Crew)</div>'
-                    f'<div class="value blue">{team_tgt_total:.0f}'
-                    f'<span style="font-size:0.8rem;color:#aaa;"> ({active_count} crew × {wk_tgt_pp:.0f})</span>'
-                    f'</div></div>', unsafe_allow_html=True)
+        st.markdown(f'''<div class="summary-card"><div class="label">Target / Crew (weekly)</div>
+<div class="value blue">{wk_tgt_pp:.0f}</div></div>''', unsafe_allow_html=True)
     with c4:
-        st.markdown(f'<div class="summary-card"><div class="label">Team Completion</div>'
-                    f'<div class="value {ccls_t}">{team_pct:.1f}%</div></div>', unsafe_allow_html=True)
+        st.markdown(f'''<div class="summary-card"><div class="label">Active Crew · Days Left</div>
+<div class="value grey" style="font-size:1.4rem;">{active_count} crew · {days_left}d</div></div>''',
+            unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown(prog_bar(team_pct), unsafe_allow_html=True)
-    st.caption(f"Target per crew: **{wk_tgt_pp:.0f}** units  ·  Active crew: **{active_count}**  ·  Days to deadline: **{days_left}**")
+    st.caption(f"Target per crew: **{wk_tgt_pp:.0f}** units  ·  Active crew this week: **{active_count}**  ·  Days to deadline: **{days_left}**")
     st.markdown("---")
+
 
     active_crew   = df_tv[df_tv["Wk_Achieved"] > 0].sort_values("Pct_Completion", ascending=False)
     inactive_crew = df_tv[df_tv["Wk_Achieved"] == 0].sort_values("Person")
