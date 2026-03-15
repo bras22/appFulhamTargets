@@ -163,10 +163,23 @@ def load_crew_data():
 def load_progress_data():
     df, err = load_tab("progress")
     if df is None: return None, err
-    if "Task" not in df.columns:
-        return None, f"progress tab not pushed yet. Columns: {df.columns.tolist()}"
 
-    # Skip the OVERALL SUMMARY row — try Row_No, then No, then Task text
+    # Guard: detect wrong-tab scenario (Google Sheets returns first tab
+    # silently when requested tab name doesn't match).
+    # Progress tab must have Row_No or No column — app tab has Person.
+    has_progress_cols = ("Row_No" in df.columns or "No" in df.columns or
+                         ("Task" in df.columns and "Person" not in df.columns))
+    if not has_progress_cols:
+        return None, (
+            "progress tab returned wrong data (got app tab instead).\n"
+            "Click **🔄 Clear Cache & Reload** then try again.\n"
+            f"Columns received: {df.columns.tolist()[:6]}"
+        )
+
+    if "Task" not in df.columns:
+        return None, f"progress tab missing Task column. Columns: {df.columns.tolist()}"
+
+    # Skip the OVERALL SUMMARY row
     row_id_col = None
     if "Row_No" in df.columns: row_id_col = "Row_No"
     elif "No"   in df.columns: row_id_col = "No"
@@ -178,11 +191,15 @@ def load_progress_data():
 
     df = df[df["Task"].astype(str).str.strip() != ""].copy()
 
+    # Parse numeric cols — values like "312.656.978.830.283" are the
+    # European-thousands-corrupted percentage (e.g. 0.3127 stored as fraction).
+    # Total_Required / Completed / Remaining are plain integers — safe_num handles both.
     for col in ["Total_Required", "Completed", "Remaining"]:
         if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+            df[col] = df[col].apply(lambda v: safe_num(v, is_daily=False))
     if "Pct_Done" in df.columns:
-        df["Pct_Done"] = df["Pct_Done"].apply(lambda v: safe_num(v, False))
+        df["Pct_Done"] = df["Pct_Done"].apply(lambda v: safe_num(v, is_daily=False))
+
     return df, None
 
 # ── Individual crew view ──────────────────────────────────────────────────────
@@ -432,11 +449,6 @@ def render_mgmt_progress():
         )
         return
 
-    # Debug: show what columns arrived (remove once confirmed working)
-    with st.expander("🔍 Debug — columns received (click to expand)", expanded=False):
-        st.write("Columns:", df.columns.tolist())
-        st.dataframe(df.head(3))
-
     # ── Parse all numeric columns robustly ───────────────────
     # Values from Excel may arrive as plain integers (22296),
     # fractions (0.313), or European-corrupted strings (22.296.000).
@@ -451,7 +463,8 @@ def render_mgmt_progress():
     # ── Overall summary row ───────────────────────────────────
     df_raw, _ = load_tab("progress")
     overall = pd.DataFrame()
-    if df_raw is not None:
+    if df_raw is not None and "Person" not in df_raw.columns:
+        # Only use if it's actually the progress tab (not app tab)
         if "Row_No" in df_raw.columns:
             overall = df_raw[df_raw["Row_No"].astype(str).str.strip() == "0"]
         elif "No" in df_raw.columns:
