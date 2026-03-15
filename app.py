@@ -1,736 +1,558 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, date
+from datetime import datetime
 
 st.set_page_config(page_title="Fulham SF – Crew Targets", page_icon="🎯", layout="wide")
-
 st.markdown("""
 <style>
-    .block-container { padding-top: 1.5rem !important; }
-    .main-header {
-        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-        padding: 1.8rem 2rem; border-radius: 12px; color: white;
-        text-align: center; margin-bottom: 1.5rem; border: 1px solid rgba(255,255,255,0.1);
-    }
-    .main-header h1 { margin: 0; font-size: 2rem; }
-    .main-header p  { margin: 0.3rem 0 0; opacity: 0.8; font-size: 1.1rem; }
-    .summary-card {
-        background: #1e1e2e; border-radius: 10px; padding: 1.2rem 1.5rem;
-        text-align: center; border: 1px solid rgba(255,255,255,0.08); height: 100%;
-    }
-    .summary-card .label { color: #aaa; font-size: 0.85rem; margin-bottom: 0.3rem; }
-    .summary-card .value { font-size: 2.2rem; font-weight: 700; line-height: 1; }
-    .crew-card {
-        background: #1e1e2e; border-radius: 10px; padding: 1.2rem;
-        text-align: center; border: 1px solid rgba(255,255,255,0.08); margin-bottom: 1rem;
-    }
-    .crew-card .crew-name { font-weight:600; font-size:0.95rem; margin-bottom:0.5rem; color:#e0e0e0; }
-    .crew-card .big-pct   { font-size:2rem; font-weight:800; line-height:1; }
-    .badge {
-        display:inline-block; padding:0.3rem 0.9rem; border-radius:20px;
-        font-size:0.75rem; font-weight:700; letter-spacing:0.04em; margin-top:0.4rem;
-    }
-    .badge-go     { background:#1a6b3a; color:#7dffb3; }
-    .badge-border { background:#6b5a00; color:#ffe57d; }
-    .badge-stay   { background:#6b1a1a; color:#ff8a8a; }
-    .badge-nodata { background:#333;    color:#aaa; }
-    .green { color:#4dff91; } .amber { color:#ffd54f; }
-    .red   { color:#ff6b6b; } .grey  { color:#888; }
-    .blue  { color:#7ddfff; }
-    .prog-wrap { background:#2a2a3e; border-radius:6px; height:12px; overflow:hidden; margin:0.4rem 0; }
-    .prog-bar  { height:100%; border-radius:6px; }
-    .pin-box {
-        max-width: 320px; margin: 4rem auto; background: #1e1e2e;
-        border-radius: 14px; padding: 2.5rem; text-align: center;
-        border: 1px solid rgba(255,255,255,0.1);
-    }
-    .pin-box h2 { color: #e0e0e0; margin-bottom: 1rem; }
-    .pin-box p  { color: #aaa; font-size: 0.9rem; margin-bottom: 1.5rem; }
-    .mgmt-header {
-        background: linear-gradient(135deg, #0f3460 0%, #1a2e5e 100%);
-        padding: 1.2rem 1.5rem; border-radius: 10px; color: white;
-        margin-bottom: 1.5rem; border: 1px solid rgba(255,255,255,0.1);
-        display: flex; justify-content: space-between; align-items: center;
-    }
+    .block-container{padding-top:1.5rem!important}
+    .main-header{background:linear-gradient(135deg,#1a1a2e,#16213e,#0f3460);padding:1.8rem 2rem;
+        border-radius:12px;color:white;text-align:center;margin-bottom:1.5rem;
+        border:1px solid rgba(255,255,255,0.1)}
+    .main-header h1{margin:0;font-size:2rem}
+    .main-header p{margin:.3rem 0 0;opacity:.8;font-size:1.1rem}
+    .summary-card{background:#1e1e2e;border-radius:10px;padding:1.2rem 1.5rem;
+        text-align:center;border:1px solid rgba(255,255,255,0.08);height:100%}
+    .summary-card .label{color:#aaa;font-size:.85rem;margin-bottom:.3rem}
+    .summary-card .value{font-size:2.2rem;font-weight:700;line-height:1}
+    .crew-card{background:#1e1e2e;border-radius:10px;padding:1.2rem;text-align:center;
+        border:1px solid rgba(255,255,255,0.08);margin-bottom:1rem}
+    .crew-card .crew-name{font-weight:600;font-size:.95rem;margin-bottom:.5rem;color:#e0e0e0}
+    .crew-card .big-pct{font-size:2rem;font-weight:800;line-height:1}
+    .badge{display:inline-block;padding:.3rem .9rem;border-radius:20px;
+        font-size:.75rem;font-weight:700;letter-spacing:.04em;margin-top:.4rem}
+    .badge-go{background:#1a6b3a;color:#7dffb3}
+    .badge-border{background:#6b5a00;color:#ffe57d}
+    .badge-stay{background:#6b1a1a;color:#ff8a8a}
+    .badge-nodata{background:#333;color:#aaa}
+    .green{color:#4dff91}.amber{color:#ffd54f}.red{color:#ff6b6b}.grey{color:#888}.blue{color:#7ddfff}
+    .prog-wrap{background:#2a2a3e;border-radius:6px;height:12px;overflow:hidden;margin:.4rem 0}
+    .prog-bar{height:100%;border-radius:6px}
+    .pin-box{max-width:320px;margin:4rem auto;background:#1e1e2e;border-radius:14px;
+        padding:2.5rem;text-align:center;border:1px solid rgba(255,255,255,0.1)}
+    .pin-box h2{color:#e0e0e0;margin-bottom:1rem}
+    .pin-box p{color:#aaa;font-size:.9rem;margin-bottom:1.5rem}
+    .mgmt-header{background:linear-gradient(135deg,#0f3460,#1a2e5e);padding:1.2rem 1.5rem;
+        border-radius:10px;color:white;margin-bottom:1.5rem;
+        border:1px solid rgba(255,255,255,0.1);
+        display:flex;justify-content:space-between;align-items:center}
 </style>
 """, unsafe_allow_html=True)
 
 SHEET_ID       = "1_eWq5Mx9zBfKfkqP56wqH3uLnwbv3k714t0dztzOEo4"
 MANAGEMENT_PIN = "1999"
 
-def sheet_url(tab):
-    return (f"https://docs.google.com/spreadsheets/d/{SHEET_ID}"
-            f"/export?format=csv&sheet={tab}")
+# ── URL builders ──────────────────────────────────────────────────────────────
+def gviz_url(tab):
+    return f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet={tab}"
+def export_url(tab):
+    return f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&sheet={tab}"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
 def status_info(pct):
-    if pct >= 100:  return "✅ GO HOME",      "badge-go",     "green"
-    elif pct >= 95: return "✅ GO (95%+)",    "badge-go",     "green"
-    elif pct >= 85: return "⚠️ BORDERLINE",   "badge-border", "amber"
-    elif pct > 0:   return "❌ SAT REQUIRED", "badge-stay",   "red"
-    else:           return "— NO DATA",       "badge-nodata", "grey"
+    if pct>=100:  return "✅ GO HOME",      "badge-go",     "green"
+    elif pct>=95: return "✅ GO (95%+)",    "badge-go",     "green"
+    elif pct>=85: return "⚠️ BORDERLINE",   "badge-border", "amber"
+    elif pct>0:   return "❌ SAT REQUIRED", "badge-stay",   "red"
+    else:         return "— NO DATA",       "badge-nodata", "grey"
 
 def prog_bar(pct):
-    cap = min(float(pct), 100)
-    c = "#4dff91" if pct >= 95 else ("#ffd54f" if pct >= 85 else "#ff6b6b")
-    return (f'<div class="prog-wrap">'
-            f'<div class="prog-bar" style="width:{cap:.1f}%;background:{c};"></div>'
-            f'</div>')
+    cap=min(float(pct),100)
+    c="#4dff91" if pct>=95 else ("#ffd54f" if pct>=85 else "#ff6b6b")
+    return f'<div class="prog-wrap"><div class="prog-bar" style="width:{cap:.1f}%;background:{c};"></div></div>'
 
-def fmt_date(iso_str):
-    try:    return datetime.strptime(str(iso_str), "%Y-%m-%d").strftime("%d %b %Y")
-    except: return str(iso_str)
+def fmt_date(iso):
+    try:    return datetime.strptime(str(iso),"%Y-%m-%d").strftime("%d %b %Y")
+    except: return str(iso)
 
 def parse_date_to_iso(v):
     if v is None: return None
-    s = str(v).strip()
-    if not s or s.lower() == "nan": return None
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y", "%d %b %Y", "%d %B %Y"):
-        try:    return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
+    s=str(v).strip()
+    if not s or s.lower()=="nan": return None
+    for fmt in ("%Y-%m-%d","%d/%m/%Y","%m/%d/%Y","%d-%m-%Y","%d %b %Y","%d %B %Y"):
+        try:    return datetime.strptime(s,fmt).strftime("%Y-%m-%d")
         except: pass
-    try:    return pd.to_datetime(s, dayfirst=False).strftime("%Y-%m-%d")
+    try:    return pd.to_datetime(s,dayfirst=False).strftime("%Y-%m-%d")
     except: return None
 
 def safe_num(v, is_daily=False):
+    """
+    Parse a value that may be a clean float, a percentage string,
+    or a European-locale-corrupted number like "959.999.999.999.997".
+    
+    Corruption chain: VBA CStr(96.0) -> "96,0" (comma decimal, AU locale)
+    -> Google Sheets reads comma as thousands sep -> stores 960
+    -> exports as "959.999.999.999.997" (dot thousands seps)
+    -> safe_num: count dots>=2 -> strip dots -> 959999999999997 / 1e12 -> 960.0
+    -> if is_daily and >500: /10 -> 96.0  ✓
+    
+    For weekly totals (is_daily=False) the same corruption gives 960 not 96.
+    We handle that separately in load_crew_data using fix_weekly().
+    """
     if v is None: return 0.0
-    s = str(v).strip()
-    if not s or s.lower() in ("nan", "—", "-", ""): return 0.0
+    s=str(v).strip()
+    if not s or s.lower() in ("nan","—","-",""): return 0.0
     if s.endswith("%"):
-        try:    return float(s[:-1]) / 100.0
+        try:    return float(s[:-1])/100.0
         except: return 0.0
-    if s.count(".") >= 2:
-        digits = s.replace(".", "")
+    # Scientific notation like "9,23E+12" — clearly corrupted pct, return 0
+    if "E+" in s.upper() or "E-" in s.upper():
+        return 0.0
+    if s.count(".")>=2:
+        digits=s.replace(".","")
         try:
-            val = float(digits) / 1e12
-            if is_daily and val > 500: val = val / 10.0
+            val=float(digits)/1e12
+            if is_daily and val>500: val=val/10.0
             return val
         except: pass
     try:    return float(s)
     except: return 0.0
 
-def task_status_style(status):
-    s = str(status)
-    if "On Track"    in s: return "green",  "🟢"
-    elif "At Risk"   in s: return "amber",  "🟡"
-    elif "Behind"    in s: return "red",    "🔴"
-    elif "No QField" in s: return "grey",   "⚪"
-    else:                  return "grey",   "⚪"
+def fix_weekly(ach, tgt):
+    """
+    Fix Wk_Achieved values that are 10× too large due to locale corruption.
+    Condition: value > 5% above target AND value÷10 ≤ target.
+    E.g. Mohamed Sy Tube Install: ach=960, tgt=716.7 -> 960>752.5 AND 96<=716.7 -> fix to 96
+    """
+    if tgt>0 and ach>tgt*1.05 and (ach/10.0)<=tgt:
+        return ach/10.0
+    return ach
+
+def task_status_style(s):
+    if "On Track" in s:   return "green", "🟢"
+    elif "At Risk" in s:  return "amber", "🟡"
+    elif "Behind"  in s:  return "red",   "🔴"
+    else:                  return "grey",  "⚪"
 
 # ── Data loading ──────────────────────────────────────────────────────────────
-
-@st.cache_data(ttl=300)
-def load_tab(tab_name):
+def _read_csv_tab(url):
+    """Fetch CSV and return clean DataFrame or None."""
     try:
-        df = pd.read_csv(sheet_url(tab_name), dtype=str, on_bad_lines="skip")
-    except Exception as e:
-        return None, str(e)
-    if df.empty:
-        return None, f"Tab '{tab_name}' is empty."
-    df.columns = [str(c).strip() for c in df.columns]
-    df = df[df.iloc[:, 0].notna()].copy()
-    df = df[~df.iloc[:, 0].astype(str).str.startswith("Last refreshed")].copy()
-    return df, None
+        df = pd.read_csv(url, dtype=str, on_bad_lines="skip")
+        if df.empty: return None
+        df.columns = [str(c).strip() for c in df.columns]
+        df = df[df.iloc[:,0].notna()].copy()
+        df = df[~df.iloc[:,0].astype(str).str.startswith("Last refreshed")].copy()
+        return df if not df.empty else None
+    except: return None
 
 @st.cache_data(ttl=300)
 def load_crew_data():
-    df, err = load_tab("app")
-    if df is None: return None, err
+    df = _read_csv_tab(gviz_url("app")) or _read_csv_tab(export_url("app"))
+    if df is None: return None, "Could not fetch app tab"
     if "Person" not in df.columns:
-        return None, f"'Person' column missing. Columns: {df.columns.tolist()[:8]}"
-    df = df[df["Person"].astype(str).str.strip() != ""].copy()
-    df = df[~df["Person"].astype(str).str.startswith("Last refreshed")].copy()
+        return None, f"Person column missing. Got: {df.columns.tolist()[:6]}"
+
+    df = df[df["Person"].astype(str).str.strip()!=""].copy()
     if "Week_Start" not in df.columns:
-        return None, "'Week_Start' column missing."
+        return None, "Week_Start column missing"
     df["Week_Start"] = df["Week_Start"].apply(parse_date_to_iso)
     df = df[df["Week_Start"].notna()].copy()
+
+    # Parse daily columns with is_daily=True (applies ÷10 if >500)
     for col in ["Mon","Tue","Wed","Thu","Fri","Sat"]:
-        if col in df.columns: df[col] = df[col].apply(lambda v: safe_num(v, True))
-    for col in ["Wk_Achieved","Wk_Target_Real","Wk_Target_Theo","Pct_Real","Remaining_Units","Days_To_Deadline"]:
-        if col in df.columns: df[col] = df[col].apply(lambda v: safe_num(v, False))
-    # No 10x correction needed — VBA now uses NumStr() with explicit
-    # decimal separator fix, so all values arrive as clean numbers.
+        if col in df.columns:
+            df[col] = df[col].apply(lambda v: safe_num(v, True))
+
+    # Parse weekly/aggregate columns with is_daily=False
+    for col in ["Wk_Achieved","Wk_Target_Real","Wk_Target_Theo",
+                "Pct_Real","Remaining_Units","Days_To_Deadline"]:
+        if col in df.columns:
+            df[col] = df[col].apply(lambda v: safe_num(v, False))
+
+    # Fix Wk_Achieved: same 10× corruption as daily but is_daily=False so safe_num
+    # didn't auto-fix. Use fix_weekly() which compares against Wk_Target_Real.
+    if "Wk_Achieved" in df.columns and "Wk_Target_Real" in df.columns:
+        df["Wk_Achieved"] = df.apply(
+            lambda r: fix_weekly(r["Wk_Achieved"], r["Wk_Target_Real"]), axis=1)
+
+    # Recalculate Pct_Real from clean values
     df["Pct_Real"] = df.apply(
-        lambda r: r["Wk_Achieved"] / r["Wk_Target_Real"] if r["Wk_Target_Real"] > 0 else 0.0, axis=1)
+        lambda r: r["Wk_Achieved"]/r["Wk_Target_Real"] if r["Wk_Target_Real"]>0 else 0.0, axis=1)
     df["Person"]       = df["Person"].astype(str).str.strip()
     df["Task"]         = df["Task"].astype(str).str.strip()
     df["Sat_Decision"] = df.get("Sat_Decision", pd.Series(["No data"]*len(df))).astype(str).str.strip()
     return df, None
 
-# ── Progress: NEVER cached — fetched fresh every time Management is opened ───
-# Caching caused stale "wrong tab" errors that persisted even after push+reload.
 def load_progress_data():
     """
-    Always fetches fresh — no @st.cache_data.
-    Uses the gviz endpoint which correctly resolves sheet names.
-    The /export?format=csv endpoint silently returns the first sheet when
-    the named sheet isn't found — gviz raises an error instead, so we can
-    detect failure and try alternatives.
+    Never cached — fetched fresh every time.
+    Tries gviz then export URLs, both with multiple case variants.
+    Validates returned data is actually the progress tab (has Row_No/No, not Person/Week_Start).
     """
-    SHEET_ID = "1_eWq5Mx9zBfKfkqP56wqH3uLnwbv3k714t0dztzOEo4"
+    def is_progress(df):
+        # Progress tab: has Row_No or No column, does NOT have Person+Week_Start
+        has_id  = "Row_No" in df.columns or "No" in df.columns
+        has_app = "Person" in df.columns and "Week_Start" in df.columns
+        return has_id and not has_app
 
-    def _is_progress_df(df):
-        """
-        Return True if df looks like the progress tab.
-        We only need to confirm it's NOT the app tab and HAS a Task column.
-        The app tab always has Person+Week_Start columns; progress never does.
-        """
-        is_app_tab = "Person" in df.columns and "Week_Start" in df.columns
-        has_task   = "Task" in df.columns
-        # Accept if it has Task column and doesn't look like the app tab
-        return has_task and not is_app_tab
-
-    def _clean(df):
-        df.columns = [str(c).strip() for c in df.columns]
-        df = df[df.iloc[:, 0].notna()].copy()
-        df = df[~df.iloc[:, 0].astype(str).str.startswith("Last refreshed")].copy()
-        return df
-
-    # ── Strategy 1: gviz endpoint (best — resolves names correctly) ──────
-    for name in ("progress", "Progress", "PROGRESS"):
-        url = (f"https://docs.google.com/spreadsheets/d/{SHEET_ID}"
-               f"/gviz/tq?tqx=out:csv&sheet={name}")
-        try:
-            df = pd.read_csv(url, dtype=str, on_bad_lines="skip")
-            if df.empty: continue
-            df = _clean(df)
-            if _is_progress_df(df):
-                # Parse numbers and return
-                for col in ["Total_Required", "Completed", "Remaining"]:
+    errors = []
+    for make_url in (gviz_url, export_url):
+        for tab in ("progress","Progress","PROGRESS"):
+            df = _read_csv_tab(make_url(tab))
+            if df is None:
+                errors.append(f"{tab} ({make_url.__name__}): empty/failed")
+                continue
+            if is_progress(df):
+                # Parse numbers
+                for col in ["Total_Required","Completed","Remaining"]:
                     if col in df.columns:
-                        df[col] = df[col].apply(lambda v: safe_num(v, False))
-                # Pct_Done recalculated from integers (stored value unreliable)
+                        df[col] = df[col].apply(lambda v: safe_num(v,False))
+                # Recalculate Pct_Done from integers — stored value is unreliable
                 if "Total_Required" in df.columns and "Completed" in df.columns:
                     df["Pct_Done"] = df.apply(
-                        lambda r: r["Completed"] / r["Total_Required"] if r["Total_Required"] > 0 else 0.0, axis=1)
-        except Exception:
-            continue
+                        lambda r: r["Completed"]/r["Total_Required"]
+                                  if r["Total_Required"]>0 else 0.0, axis=1)
+                return df, None
+            else:
+                errors.append(f"{tab} ({make_url.__name__}): got wrong tab cols={df.columns.tolist()[:5]}")
 
-    # ── Strategy 2: export URL with name variants ────────────────────────
-    for name in ("progress", "Progress", "PROGRESS"):
-        url = (f"https://docs.google.com/spreadsheets/d/{SHEET_ID}"
-               f"/export?format=csv&sheet={name}")
-        try:
-            df = pd.read_csv(url, dtype=str, on_bad_lines="skip")
-            if df.empty: continue
-            df = _clean(df)
-            if _is_progress_df(df):
-                for col in ["Total_Required", "Completed", "Remaining"]:
-                    if col in df.columns:
-                        df[col] = df[col].apply(lambda v: safe_num(v, False))
-                # Pct_Done recalculated from integers (stored value unreliable)
-                if "Total_Required" in df.columns and "Completed" in df.columns:
-                    df["Pct_Done"] = df.apply(
-                        lambda r: r["Completed"] / r["Total_Required"] if r["Total_Required"] > 0 else 0.0, axis=1)
-        except Exception:
-            continue
-
+    diag = "\n".join(errors)
     return None, (
-        "Could not load the **progress** tab.\n\n"
-        "**Check in Google Sheets that:**\n"
-        "1. The tab exists and is named exactly `progress` (lowercase)\n"
-        "2. **PushProgressSheet** has been run in Excel\n"
-        "3. The sheet is shared as *Anyone with the link → Viewer*\n\n"
-        "The progress tab should have columns: `Row_No, Task, Total_Required, Completed...`"
+        f"Could not load the progress tab.\n\n"
+        f"**Fetch attempts:**\n```\n{diag}\n```\n\n"
+        f"Ensure the tab is named `progress` (lowercase) in Google Sheets "
+        f"and PushProgressSheet has been run."
     )
 
-# ── Individual crew view ──────────────────────────────────────────────────────
-
+# ── Individual view ───────────────────────────────────────────────────────────
 def render_individual(df_pw, person):
-    active    = df_pw[df_pw["Wk_Achieved"] > 0]
+    active    = df_pw[df_pw["Wk_Achieved"]>0]
     total_ach = active["Wk_Achieved"].sum()
     total_tgt = active["Wk_Target_Real"].sum()
-    avg_pct   = (total_ach / total_tgt * 100) if total_tgt > 0 else 0.0
+    avg_pct   = (total_ach/total_tgt*100) if total_tgt>0 else 0.0
     sat_dec   = df_pw["Sat_Decision"].iloc[0] if len(df_pw) else "No data"
     days_left = int(df_pw["Days_To_Deadline"].iloc[0]) if len(df_pw) else 0
-
-    label, badge, ccls = status_info(avg_pct)
+    label,badge,ccls = status_info(avg_pct)
     st.markdown(f"## 👤 {person}")
-
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.markdown(f'<div class="summary-card"><div class="label">Total Units This Week</div>'
-                    f'<div class="value {ccls}">{total_ach:.1f}</div></div>', unsafe_allow_html=True)
-    with c2:
-        st.markdown(f'<div class="summary-card"><div class="label">Avg Completion</div>'
-                    f'<div class="value {ccls}">{avg_pct:.1f}%</div></div>', unsafe_allow_html=True)
-    with c3:
-        st.markdown(f'<div class="summary-card"><div class="label">Saturday Decision</div>'
-                    f'<div class="value" style="font-size:0.9rem;padding-top:0.8rem;">'
-                    f'<span class="badge {badge}">{label}</span></div></div>', unsafe_allow_html=True)
-    with c4:
-        st.markdown(f'<div class="summary-card"><div class="label">Days to Deadline</div>'
-                    f'<div class="value grey">{days_left}</div></div>', unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    dec = sat_dec.lower()
+    c1,c2,c3,c4 = st.columns(4)
+    with c1: st.markdown(f'<div class="summary-card"><div class="label">Total Units This Week</div><div class="value {ccls}">{total_ach:.1f}</div></div>',unsafe_allow_html=True)
+    with c2: st.markdown(f'<div class="summary-card"><div class="label">Avg Completion</div><div class="value {ccls}">{avg_pct:.1f}%</div></div>',unsafe_allow_html=True)
+    with c3: st.markdown(f'<div class="summary-card"><div class="label">Saturday Decision</div><div class="value" style="font-size:.9rem;padding-top:.8rem;"><span class="badge {badge}">{label}</span></div></div>',unsafe_allow_html=True)
+    with c4: st.markdown(f'<div class="summary-card"><div class="label">Days to Deadline</div><div class="value grey">{days_left}</div></div>',unsafe_allow_html=True)
+    st.markdown("<br>",unsafe_allow_html=True)
+    dec=sat_dec.lower()
     if "saturday required" in dec:
-        st.error(f"⚠️ {sat_dec}  —  {max(0, total_tgt - total_ach):.1f} units still owed")
+        st.error(f"⚠️ {sat_dec}  —  {max(0,total_tgt-total_ach):.1f} units still owed")
     elif "go home" in dec:
         st.success(f"✅ {sat_dec}")
-    elif dec not in ("no activity", "no data"):
+    elif dec not in ("no activity","no data"):
         st.warning(f"📋 {sat_dec}")
-
     st.markdown("---")
     st.subheader("📋 Task Breakdown")
-    active_tasks  = df_pw[df_pw["Wk_Achieved"] > 0]
-    passive_tasks = df_pw[df_pw["Wk_Achieved"] == 0]
-
-    def render_task(row, expanded=True):
-        pct = row["Pct_Real"] * 100
-        lbl, badge_t, _ = status_info(pct)
-        header = (f"**{row['Task']}**  —  "
-                  f"{row['Wk_Achieved']:.1f} / {row['Wk_Target_Real']:.1f} units  ({pct:.1f}%)")
-        with st.expander(header, expanded=expanded):
-            left, right = st.columns([3, 1])
+    def render_task(row,expanded=True):
+        pct=row["Pct_Real"]*100
+        lbl,badge_t,_=status_info(pct)
+        with st.expander(f"**{row['Task']}**  —  {row['Wk_Achieved']:.1f} / {row['Wk_Target_Real']:.1f} units  ({pct:.1f}%)",expanded=expanded):
+            left,right=st.columns([3,1])
             with left:
                 st.markdown("**Daily Achieved:**")
-                daily = pd.DataFrame({"Day": ["Mon","Tue","Wed","Thu","Fri","Sat"],
-                                      "Achieved": [row["Mon"],row["Tue"],row["Wed"],
-                                                   row["Thu"],row["Fri"],row["Sat"]]})
-                st.bar_chart(daily.set_index("Day"), height=200)
+                daily=pd.DataFrame({"Day":["Mon","Tue","Wed","Thu","Fri","Sat"],
+                                    "Achieved":[row["Mon"],row["Tue"],row["Wed"],row["Thu"],row["Fri"],row["Sat"]]})
+                st.bar_chart(daily.set_index("Day"),height=200)
             with right:
                 st.markdown("**Weekly:**")
-                st.metric("Achieved",      f"{row['Wk_Achieved']:.1f}")
-                st.metric("Target (Real)", f"{row['Wk_Target_Real']:.1f}")
-                st.metric("Target (Theo)", f"{row['Wk_Target_Theo']:.1f}")
-                rem = row["Wk_Target_Real"] - row["Wk_Achieved"]
-                if rem > 0.01:
-                    st.metric("Still Owed", f"{rem:.1f}", delta=f"{pct:.1f}%", delta_color="inverse")
-                else:
-                    st.metric("Remaining", "✅ Done")
-                st.markdown(prog_bar(pct), unsafe_allow_html=True)
-                st.markdown(f'<span class="badge {badge_t}">{lbl}</span>', unsafe_allow_html=True)
-
-    if len(active_tasks):
+                st.metric("Achieved",f"{row['Wk_Achieved']:.1f}")
+                st.metric("Target (Real)",f"{row['Wk_Target_Real']:.1f}")
+                st.metric("Target (Theo)",f"{row['Wk_Target_Theo']:.1f}")
+                rem=row["Wk_Target_Real"]-row["Wk_Achieved"]
+                if rem>0.01: st.metric("Still Owed",f"{rem:.1f}",delta=f"{pct:.1f}%",delta_color="inverse")
+                else:        st.metric("Remaining","✅ Done")
+                st.markdown(prog_bar(pct),unsafe_allow_html=True)
+                st.markdown(f'<span class="badge {badge_t}">{lbl}</span>',unsafe_allow_html=True)
+    active_t  = df_pw[df_pw["Wk_Achieved"]>0]
+    passive_t = df_pw[df_pw["Wk_Achieved"]==0]
+    if len(active_t):
         st.markdown("##### 🔥 Active Tasks")
-        for _, row in active_tasks.iterrows(): render_task(row, expanded=True)
-    if len(passive_tasks):
+        for _,row in active_t.iterrows(): render_task(row,True)
+    if len(passive_t):
         st.markdown("##### 📌 No Activity This Week")
-        for _, row in passive_tasks.iterrows(): render_task(row, expanded=False)
+        for _,row in passive_t.iterrows(): render_task(row,False)
 
 # ── Task View (public) ────────────────────────────────────────────────────────
-
 def render_taskview():
     st.markdown("## 🔧 Task View — All Crew Breakdown")
-    df_app, err = load_crew_data()
+    df_app,err = load_crew_data()
     if df_app is None:
-        st.error(f"Could not load crew data: `{err}`")
-        return
-
+        st.error(f"Could not load crew data: `{err}`"); return
     all_tasks = sorted(df_app["Task"].dropna().unique().tolist())
     all_weeks = sorted(df_app["Week_Start"].dropna().unique().tolist())
     if not all_tasks:
-        st.warning("No task data found. Run RefreshAppSheet → PushAll in Excel.")
-        return
-
-    col1, col2 = st.columns(2)
-    with col1: sel_task = st.selectbox("Task", all_tasks)
-    with col2:
-        sel_week = st.selectbox("Week", all_weeks,
-                                format_func=lambda w: fmt_date(w) if w else str(w),
-                                index=len(all_weeks) - 1 if all_weeks else 0)
-
-    df_tv = df_app[(df_app["Task"] == sel_task) & (df_app["Week_Start"] == sel_week)].copy()
+        st.warning("No task data. Run RefreshAppSheet → PushAll in Excel."); return
+    c1,c2 = st.columns(2)
+    with c1: sel_task = st.selectbox("Task",all_tasks)
+    with c2: sel_week = st.selectbox("Week",all_weeks,
+                         format_func=lambda w:fmt_date(w) if w else str(w),
+                         index=len(all_weeks)-1 if all_weeks else 0)
+    df_tv = df_app[(df_app["Task"]==sel_task)&(df_app["Week_Start"]==sel_week)].copy()
     if df_tv.empty:
-        st.warning(f"No data for **{sel_task}** in week `{sel_week}`.")
-        return
-
+        st.warning(f"No data for **{sel_task}** week `{sel_week}`."); return
     df_tv["Pct_Completion"] = df_tv.apply(
-        lambda r: (r["Wk_Achieved"] / r["Wk_Target_Real"] * 100)
-                  if r["Wk_Target_Real"] > 0 else 0.0, axis=1)
-
-    # Wk_Target_Theo = per-crew plan target (stored as tTpd/tPplPlan × 5.5)
-    # This is the individual weekly plan target per crew member.
-    wk_tgt_pp    = safe_num(df_tv["Wk_Target_Theo"].iloc[0]) if "Wk_Target_Theo" in df_tv.columns                    else safe_num(df_tv["Wk_Target_Real"].iloc[0]) if "Wk_Target_Real" in df_tv.columns else 0
-    active_count = len(df_tv[df_tv["Wk_Achieved"] > 0])
+        lambda r: r["Wk_Achieved"]/r["Wk_Target_Real"]*100 if r["Wk_Target_Real"]>0 else 0.0, axis=1)
+    wk_tgt_pp    = safe_num(df_tv["Wk_Target_Theo"].iloc[0]) if "Wk_Target_Theo" in df_tv.columns \
+                   else safe_num(df_tv["Wk_Target_Real"].iloc[0])
+    active_count = len(df_tv[df_tv["Wk_Achieved"]>0])
     team_total   = df_tv["Wk_Achieved"].sum()
     days_left    = int(df_tv["Days_To_Deadline"].iloc[0]) if "Days_To_Deadline" in df_tv.columns else 0
-
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.markdown(f'''<div class="summary-card"><div class="label">Task</div>
-<div class="value blue" style="font-size:1rem;padding-top:0.5rem;">{sel_task}</div></div>''',
-            unsafe_allow_html=True)
-    with c2:
-        st.markdown(f'''<div class="summary-card"><div class="label">Team Total This Week</div>
-<div class="value green">{team_total:.0f}</div></div>''', unsafe_allow_html=True)
-    with c3:
-        st.markdown(f'''<div class="summary-card"><div class="label">Target / Crew (weekly)</div>
-<div class="value blue">{wk_tgt_pp:.0f}</div></div>''', unsafe_allow_html=True)
-    with c4:
-        st.markdown(f'''<div class="summary-card"><div class="label">Active Crew · Days Left</div>
-<div class="value grey" style="font-size:1.4rem;">{active_count} crew · {days_left}d</div></div>''',
-            unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.caption(f"Target per crew: **{wk_tgt_pp:.0f}** units  ·  Active crew this week: **{active_count}**  ·  Days to deadline: **{days_left}**")
+    _,_,ccls_t   = status_info(team_total/wk_tgt_pp*100/max(active_count,1) if wk_tgt_pp>0 else 0)
+    c1,c2,c3,c4 = st.columns(4)
+    with c1: st.markdown(f'<div class="summary-card"><div class="label">Task</div><div class="value blue" style="font-size:1rem;padding-top:.5rem;">{sel_task}</div></div>',unsafe_allow_html=True)
+    with c2: st.markdown(f'<div class="summary-card"><div class="label">Team Total This Week</div><div class="value green">{team_total:.0f}</div></div>',unsafe_allow_html=True)
+    with c3: st.markdown(f'<div class="summary-card"><div class="label">Target / Crew (weekly)</div><div class="value blue">{wk_tgt_pp:.0f}</div></div>',unsafe_allow_html=True)
+    with c4: st.markdown(f'<div class="summary-card"><div class="label">Active Crew · Days Left</div><div class="value grey" style="font-size:1.4rem;">{active_count} crew · {days_left}d</div></div>',unsafe_allow_html=True)
+    st.markdown("<br>",unsafe_allow_html=True)
+    st.caption(f"Target per crew: **{wk_tgt_pp:.0f}** units  ·  Active crew: **{active_count}**  ·  Days to deadline: **{days_left}**")
     st.markdown("---")
-
-
-    active_crew   = df_tv[df_tv["Wk_Achieved"] > 0].sort_values("Pct_Completion", ascending=False)
-    inactive_crew = df_tv[df_tv["Wk_Achieved"] == 0].sort_values("Person")
-
+    active_crew   = df_tv[df_tv["Wk_Achieved"]>0].sort_values("Pct_Completion",ascending=False)
+    inactive_crew = df_tv[df_tv["Wk_Achieved"]==0].sort_values("Person")
     if len(active_crew):
         st.subheader(f"🔥 Active Crew ({len(active_crew)})")
-        cols = st.columns(4)
-        for idx, (_, row) in enumerate(active_crew.iterrows()):
-            pct    = row["Pct_Completion"]
-            wk_ach = row["Wk_Achieved"]
-            lbl, badge, ccls = status_info(pct)
-            with cols[idx % 4]:
+        cols=st.columns(4)
+        for idx,(_,row) in enumerate(active_crew.iterrows()):
+            pct=row["Pct_Completion"]; lbl,badge,ccls=status_info(pct)
+            with cols[idx%4]:
                 st.markdown(
-                    f'<div class="crew-card">'
-                    f'<div class="crew-name">{row["Person"]}</div>'
-                    f'<div class="big-pct {ccls}">{pct:.1f}%</div>'
-                    f'{prog_bar(pct)}'
-                    f'<div style="font-size:0.8rem;color:#aaa;margin-top:0.3rem;">'
-                    f'{wk_ach:.1f} / {wk_tgt_pp:.1f} units</div>'
-                    f'<span class="badge {badge}">{lbl}</span>'
-                    f'</div>', unsafe_allow_html=True)
-
-    if len(active_crew):
+                    f'<div class="crew-card"><div class="crew-name">{row["Person"]}</div>'
+                    f'<div class="big-pct {ccls}">{pct:.1f}%</div>{prog_bar(pct)}'
+                    f'<div style="font-size:.8rem;color:#aaa;margin-top:.3rem;">{row["Wk_Achieved"]:.1f} / {wk_tgt_pp:.1f} units</div>'
+                    f'<span class="badge {badge}">{lbl}</span></div>',unsafe_allow_html=True)
         st.markdown("---")
         st.subheader("📊 Daily Breakdown")
-        day_cols = [c for c in ["Person","Mon","Tue","Wed","Thu","Fri","Sat",
-                                "Wk_Achieved","Wk_Target_Real","Remaining_Units","Pct_Completion"]
-                    if c in active_crew.columns]
-        df_disp = active_crew[day_cols].copy()
-        for col in [c for c in day_cols if c != "Person"]:
-            df_disp[col] = df_disp[col].apply(
-                lambda x: f"{float(x):.1f}%" if col == "Pct_Completion"
+        day_cols=[c for c in ["Person","Mon","Tue","Wed","Thu","Fri","Sat",
+                               "Wk_Achieved","Wk_Target_Real","Remaining_Units","Pct_Completion"]
+                  if c in active_crew.columns]
+        df_d=active_crew[day_cols].copy()
+        for col in [c for c in day_cols if c!="Person"]:
+            df_d[col]=df_d[col].apply(
+                lambda x: f"{float(x):.1f}%" if col=="Pct_Completion"
                           else f"{float(x):.1f}" if str(x) not in ("","nan") else "—")
-        st.dataframe(df_disp.rename(columns={
-            "Person":"Crew", "Wk_Achieved":"Week Total",
-            "Wk_Target_Real":"Target/Crew", "Remaining_Units":"Remaining",
-            "Pct_Completion":"% Done"}),
-            use_container_width=True, hide_index=True)
-
+        st.dataframe(df_d.rename(columns={"Person":"Crew","Wk_Achieved":"Week Total",
+            "Wk_Target_Real":"Target/Crew","Remaining_Units":"Remaining","Pct_Completion":"% Done"}),
+            use_container_width=True,hide_index=True)
     if len(inactive_crew):
         with st.expander(f"👻 {len(inactive_crew)} crew with no activity this week"):
-            for _, row in inactive_crew.iterrows():
-                st.markdown(f"- {row['Person']}")
+            for _,row in inactive_crew.iterrows(): st.markdown(f"- {row['Person']}")
 
 # ── Team Overview ─────────────────────────────────────────────────────────────
-
-def render_team(df_week, week_label_str):
-    st.markdown(f"## 👥 All Crew — {week_label_str}")
-    if df_week.empty:
-        st.info("No data found for this week.")
-        return
-
+def render_team(df_week,week_lbl):
+    st.markdown(f"## 👥 All Crew — {week_lbl}")
+    if df_week.empty: st.info("No data for this week."); return
     def person_summary(grp):
-        worked = grp[grp["Wk_Achieved"] > 0]
-        ach = worked["Wk_Achieved"].sum()
-        tgt = worked["Wk_Target_Real"].sum()
-        return pd.Series({"total_ach": ach, "total_tgt": tgt,
-                          "pct": (ach / tgt * 100) if tgt > 0 else 0.0,
-                          "sat_dec": grp["Sat_Decision"].iloc[0], "active": ach > 0})
-
-    summary = df_week.groupby("Person").apply(person_summary).reset_index()
-    active_df   = summary[summary["active"]].sort_values("pct", ascending=False)
-    inactive_df = summary[~summary["active"]].sort_values("Person")
-    summary = pd.concat([active_df, inactive_df], ignore_index=True)
-
-    on_track   = int((summary["pct"] >= 95).sum())
-    borderline = int(((summary["pct"] >= 85) & (summary["pct"] < 95)).sum())
-    need_sat   = int((summary["active"] & (summary["pct"] < 85)).sum())
-    no_act     = int((~summary["active"]).sum())
-
-    mc1, mc2, mc3, mc4 = st.columns(4)
-    mc1.metric("✅ On Track (≥95%)", on_track)
-    mc2.metric("⚠️ Borderline (85–94%)", borderline)
-    mc3.metric("❌ Need Saturday (<85%)", need_sat)
-    mc4.metric("— No Activity", no_act)
+        worked=grp[grp["Wk_Achieved"]>0]
+        ach=worked["Wk_Achieved"].sum(); tgt=worked["Wk_Target_Real"].sum()
+        return pd.Series({"total_ach":ach,"total_tgt":tgt,
+                          "pct":(ach/tgt*100) if tgt>0 else 0.0,
+                          "sat_dec":grp["Sat_Decision"].iloc[0],"active":ach>0})
+    summary=df_week.groupby("Person").apply(person_summary).reset_index()
+    summary=pd.concat([summary[summary["active"]].sort_values("pct",ascending=False),
+                       summary[~summary["active"]].sort_values("Person")],ignore_index=True)
+    on_track=int((summary["pct"]>=95).sum())
+    borderline=int(((summary["pct"]>=85)&(summary["pct"]<95)).sum())
+    need_sat=int((summary["active"]&(summary["pct"]<85)).sum())
+    no_act=int((~summary["active"]).sum())
+    mc1,mc2,mc3,mc4=st.columns(4)
+    mc1.metric("✅ On Track (≥95%)",on_track)
+    mc2.metric("⚠️ Borderline (85–94%)",borderline)
+    mc3.metric("❌ Need Saturday (<85%)",need_sat)
+    mc4.metric("— No Activity",no_act)
     st.markdown("---")
-
-    cols = st.columns(4)
-    for i, row in summary.iterrows():
-        pct, active = row["pct"], row["active"]
+    cols=st.columns(4)
+    for i,row in summary.iterrows():
+        pct,active=row["pct"],row["active"]
         if active:
-            lbl, badge, ccls = status_info(pct)
-            pct_str   = f"{pct:.1f}%"
-            units_str = f'{row["total_ach"]:.0f} / {row["total_tgt"]:.0f} units'
+            lbl,badge,ccls=status_info(pct)
+            pct_str=f"{pct:.1f}%"; units_str=f'{row["total_ach"]:.0f} / {row["total_tgt"]:.0f} units'
         else:
-            lbl, badge, ccls = "— NO DATA", "badge-nodata", "grey"
-            pct_str, units_str = "—", "No activity this week"
-        with cols[i % 4]:
+            lbl,badge,ccls="— NO DATA","badge-nodata","grey"
+            pct_str,units_str="—","No activity this week"
+        with cols[i%4]:
             st.markdown(
-                f'<div class="crew-card">'
-                f'<div class="crew-name">{row["Person"]}</div>'
+                f'<div class="crew-card"><div class="crew-name">{row["Person"]}</div>'
                 f'<div class="big-pct {ccls}">{pct_str}</div>'
                 f'{prog_bar(pct) if active else ""}'
-                f'<div style="font-size:0.8rem;color:#aaa;margin-top:0.3rem;">{units_str}</div>'
-                f'<span class="badge {badge}">{lbl}</span>'
-                f'</div>', unsafe_allow_html=True)
+                f'<div style="font-size:.8rem;color:#aaa;margin-top:.3rem;">{units_str}</div>'
+                f'<span class="badge {badge}">{lbl}</span></div>',unsafe_allow_html=True)
 
 # ── Project Progress ──────────────────────────────────────────────────────────
-
 def render_mgmt_progress():
     st.markdown("## 📊 Project Progress")
-
-    # NOT cached — avoids stale wrong-tab results persisting across sessions
-    df, err = load_progress_data()
+    df,err = load_progress_data()
     if df is None:
-        st.warning(f"**Progress data unavailable:**\n\n{err}")
-        return
+        st.warning(f"**Progress data unavailable:**\n\n{err}"); return
+    id_col="Row_No" if "Row_No" in df.columns else ("No" if "No" in df.columns else None)
+    if id_col:
+        overall_df = df[df[id_col].astype(str).str.strip()=="0"]
+        task_df    = df[df[id_col].astype(str).str.strip()!="0"].copy()
+    else:
+        overall_df = df[df["Task"].astype(str).str.contains("OVERALL",case=False,na=False)]
+        task_df    = df[~df["Task"].astype(str).str.contains("OVERALL",case=False,na=False)].copy()
+    task_df = task_df[task_df["Task"].astype(str).str.strip()!=""].copy()
 
-    row_id_col = "Row_No" if "Row_No" in df.columns else ("No" if "No" in df.columns else None)
-
-    # Split overall summary row from task rows
-    overall_df = pd.DataFrame()
-    task_df    = df.copy()
-    if row_id_col:
-        overall_df = df[df[row_id_col].astype(str).str.strip() == "0"]
-        task_df    = df[df[row_id_col].astype(str).str.strip() != "0"].copy()
-    elif "Task" in df.columns:
-        overall_df = df[df["Task"].astype(str).str.contains("OVERALL", case=False, na=False)]
-        task_df    = df[~df["Task"].astype(str).str.contains("OVERALL", case=False, na=False)].copy()
-    task_df = task_df[task_df["Task"].astype(str).str.strip().notna()].copy()
-    task_df = task_df[task_df["Task"].astype(str).str.strip() != ""].copy()
-
-    # ── Summary cards ─────────────────────────────────────────
-    total_req = 0.0; total_done = 0.0; total_rem = 0.0
-    ov_pct    = 0.0; deadline   = "";  days_left = ""
-
+    # Summary row values
+    total_req=0.0; total_done=0.0; total_rem=0.0; ov_pct=0.0; deadline=""; days_left=""
     if len(overall_df):
-        or_       = overall_df.iloc[0]
-        total_req  = safe_num(or_.get("Total_Required", 0))
-        total_done = safe_num(or_.get("Completed", 0))
-        total_rem  = safe_num(or_.get("Remaining", 0))
-        ov_pct     = (total_done / total_req * 100) if total_req > 0 else 0.0  # recalc from integers
-        deadline   = str(or_.get("Deadline", ""))
-        days_left  = str(or_.get("Days_Left", "")).replace("DAYS TO DEADLINE:", "").strip()
+        or_=overall_df.iloc[0]
+        total_req  = safe_num(or_.get("Total_Required",0))
+        total_done = safe_num(or_.get("Completed",0))
+        total_rem  = safe_num(or_.get("Remaining",0))
+        ov_pct     = (total_done/total_req*100) if total_req>0 else 0.0
+        deadline   = str(or_.get("Deadline",""))
+        days_left  = str(or_.get("Days_Left","")).replace("DAYS TO DEADLINE:","").strip()
     elif len(task_df):
         total_req  = task_df["Total_Required"].sum() if "Total_Required" in task_df.columns else 0
         total_done = task_df["Completed"].sum()      if "Completed"      in task_df.columns else 0
-        total_rem  = total_req - total_done
-        ov_pct     = (total_done / total_req * 100)  if total_req > 0 else 0.0
+        total_rem  = total_req-total_done
+        ov_pct     = (total_done/total_req*100)      if total_req>0 else 0.0
 
-    clr_pct = "green" if ov_pct >= 80 else ("amber" if ov_pct >= 40 else "red")
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.markdown(f'<div class="summary-card"><div class="label">Total Required</div>'
-                    f'<div class="value blue">{total_req:,.0f}</div></div>', unsafe_allow_html=True)
-    with c2:
-        st.markdown(f'<div class="summary-card"><div class="label">Completed</div>'
-                    f'<div class="value green">{total_done:,.0f}</div></div>', unsafe_allow_html=True)
-    with c3:
-        st.markdown(f'<div class="summary-card"><div class="label">Remaining</div>'
-                    f'<div class="value amber">{total_rem:,.0f}</div></div>', unsafe_allow_html=True)
-    with c4:
-        st.markdown(f'<div class="summary-card"><div class="label">Overall % Done</div>'
-                    f'<div class="value {clr_pct}">{ov_pct:.1f}%</div></div>', unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown(prog_bar(ov_pct), unsafe_allow_html=True)
-    ci1, ci2 = st.columns(2)
-    with ci1:
-        dl_fmt = fmt_date(parse_date_to_iso(deadline)) if deadline else "—"
-        st.info(f"🗓 **Deadline:** {dl_fmt}")
-    with ci2:
-        st.info(f"⏳ **Days to Deadline:** {days_left if days_left else '—'}")
+    clr="green" if ov_pct>=80 else ("amber" if ov_pct>=40 else "red")
+    c1,c2,c3,c4=st.columns(4)
+    with c1: st.markdown(f'<div class="summary-card"><div class="label">Total Required</div><div class="value blue">{total_req:,.0f}</div></div>',unsafe_allow_html=True)
+    with c2: st.markdown(f'<div class="summary-card"><div class="label">Completed</div><div class="value green">{total_done:,.0f}</div></div>',unsafe_allow_html=True)
+    with c3: st.markdown(f'<div class="summary-card"><div class="label">Remaining</div><div class="value amber">{total_rem:,.0f}</div></div>',unsafe_allow_html=True)
+    with c4: st.markdown(f'<div class="summary-card"><div class="label">Overall % Done</div><div class="value {clr}">{ov_pct:.1f}%</div></div>',unsafe_allow_html=True)
+    st.markdown("<br>",unsafe_allow_html=True)
+    st.markdown(prog_bar(ov_pct),unsafe_allow_html=True)
+    ci1,ci2=st.columns(2)
+    with ci1: st.info(f"🗓 **Deadline:** {fmt_date(parse_date_to_iso(deadline)) if deadline else '—'}")
+    with ci2: st.info(f"⏳ **Days to Deadline:** {days_left if days_left else '—'}")
     st.markdown("---")
 
-    # ── Per-task cards 2-column grid ──────────────────────────
-    task_rows = [row for _, row in task_df.iterrows()
-                 if str(row.get("Task","")).strip() not in ("","nan")]
-
-    for i in range(0, len(task_rows), 2):
-        cols = st.columns(2)
-        for col_idx, row in enumerate(task_rows[i:i+2]):
-            task     = str(row.get("Task",""))
-            req      = float(row.get("Total_Required", 0))
-            done     = float(row.get("Completed", 0))
-            pct      = float(row.get("Pct_Done", 0)) * 100
-            rate_2wk = str(row.get("Rate_2wk",  "—"))
-            reqd_r   = str(row.get("Reqd_Rate",  "—"))
-            proj_fin = str(row.get("Proj_Finish","—"))
-            status   = str(row.get("Status",     "—"))
-            row_no   = str(row.get(row_id_col, "")) if row_id_col else ""
-
-            clr, icon = task_status_style(status)
-            bar_c     = "#4dff91" if pct >= 80 else ("#ffd54f" if pct >= 50 else "#ff6b6b")
-            cap       = min(pct, 100)
-            txt_c     = "#4dff91" if clr=="green" else "#ffd54f" if clr=="amber" else "#ff6b6b" if clr=="red" else "#888"
-            proj_fmt  = fmt_date(parse_date_to_iso(proj_fin)) if proj_fin not in ("?","—","") else proj_fin
-
-            with cols[col_idx]:
+    # Per-task cards 2-column grid
+    task_rows=[row for _,row in task_df.iterrows()
+               if str(row.get("Task","")).strip() not in ("","nan")]
+    for i in range(0,len(task_rows),2):
+        cols=st.columns(2)
+        for ci,row in enumerate(task_rows[i:i+2]):
+            task    =str(row.get("Task",""))
+            req     =float(row.get("Total_Required",0))
+            done    =float(row.get("Completed",0))
+            pct     =(done/req*100) if req>0 else 0.0
+            rate_2wk=str(row.get("Rate_2wk","—"))
+            reqd_r  =str(row.get("Reqd_Rate","—"))
+            proj_fin=str(row.get("Proj_Finish","—"))
+            status  =str(row.get("Status","—"))
+            row_no  =str(row.get(id_col,"")) if id_col else ""
+            clr2,icon=task_status_style(status)
+            bar_c="#4dff91" if pct>=80 else ("#ffd54f" if pct>=50 else "#ff6b6b")
+            cap=min(pct,100)
+            txt_c={"green":"#4dff91","amber":"#ffd54f","red":"#ff6b6b"}.get(clr2,"#888")
+            proj_fmt=fmt_date(parse_date_to_iso(proj_fin)) if proj_fin not in ("?","—","") else proj_fin
+            with cols[ci]:
                 st.markdown(f"""
 <div style="background:#1e1e2e;border-radius:10px;padding:1.2rem;
      border:1px solid rgba(255,255,255,0.08);margin-bottom:1rem;">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.6rem;">
-    <span style="font-weight:700;font-size:0.95rem;color:#e0e0e0;">{row_no}. {task}</span>
-    <span style="font-size:0.8rem;font-weight:700;color:{txt_c};">{icon} {status}</span>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.6rem;">
+    <span style="font-weight:700;font-size:.95rem;color:#e0e0e0;">{row_no}. {task}</span>
+    <span style="font-size:.8rem;font-weight:700;color:{txt_c};">{icon} {status}</span>
   </div>
-  <div style="background:#2a2a3e;border-radius:6px;height:10px;overflow:hidden;margin-bottom:0.7rem;">
+  <div style="background:#2a2a3e;border-radius:6px;height:10px;overflow:hidden;margin-bottom:.7rem;">
     <div style="width:{cap:.1f}%;height:100%;background:{bar_c};border-radius:6px;"></div>
   </div>
-  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.3rem;font-size:0.82rem;text-align:center;margin-bottom:0.5rem;">
-    <div><span style="color:#aaa;display:block;font-size:0.75rem;">Required</span>
-         <span style="font-weight:700;color:#7ddfff;">{req:,.0f}</span></div>
-    <div><span style="color:#aaa;display:block;font-size:0.75rem;">Completed</span>
-         <span style="font-weight:700;color:#4dff91;">{done:,.0f}</span></div>
-    <div><span style="color:#aaa;display:block;font-size:0.75rem;">% Done</span>
-         <span style="font-weight:700;color:{txt_c};">{pct:.1f}%</span></div>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:.3rem;font-size:.82rem;text-align:center;margin-bottom:.5rem;">
+    <div><span style="color:#aaa;display:block;font-size:.75rem;">Required</span><span style="font-weight:700;color:#7ddfff;">{req:,.0f}</span></div>
+    <div><span style="color:#aaa;display:block;font-size:.75rem;">Completed</span><span style="font-weight:700;color:#4dff91;">{done:,.0f}</span></div>
+    <div><span style="color:#aaa;display:block;font-size:.75rem;">% Done</span><span style="font-weight:700;color:{txt_c};">{pct:.1f}%</span></div>
   </div>
-  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.3rem;font-size:0.78rem;text-align:center;">
-    <div><span style="color:#aaa;display:block;font-size:0.72rem;">Rate/day</span>
-         <span style="color:#e0e0e0;">{rate_2wk}</span></div>
-    <div><span style="color:#aaa;display:block;font-size:0.72rem;">Req'd Rate</span>
-         <span style="color:#e0e0e0;">{reqd_r}</span></div>
-    <div><span style="color:#aaa;display:block;font-size:0.72rem;">Proj. Finish</span>
-         <span style="color:#e0e0e0;">{proj_fmt}</span></div>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:.3rem;font-size:.78rem;text-align:center;">
+    <div><span style="color:#aaa;display:block;font-size:.72rem;">Rate/day</span><span style="color:#e0e0e0;">{rate_2wk}</span></div>
+    <div><span style="color:#aaa;display:block;font-size:.72rem;">Req'd Rate</span><span style="color:#e0e0e0;">{reqd_r}</span></div>
+    <div><span style="color:#aaa;display:block;font-size:.72rem;">Proj. Finish</span><span style="color:#e0e0e0;">{proj_fmt}</span></div>
   </div>
-</div>
-""", unsafe_allow_html=True)
+</div>""",unsafe_allow_html=True)
 
     if "Explanation" in task_df.columns:
-        st.markdown("---")
-        st.subheader("📝 Detail per Task")
-        for _, row in task_df.iterrows():
-            s = str(row.get("Status",""))
-            _, icon = task_status_style(s)
-            task = str(row.get("Task",""))
+        st.markdown("---"); st.subheader("📝 Detail per Task")
+        for _,row in task_df.iterrows():
+            s=str(row.get("Status",""));_,icon=task_status_style(s)
+            task=str(row.get("Task",""))
             if not task or task.lower() in ("nan",""): continue
             with st.expander(f"{icon} **{task}** — {s}"):
-                st.code(str(row.get("Explanation","")).replace(" | ","\n"), language=None)
+                st.code(str(row.get("Explanation","")).replace(" | ","\n"),language=None)
 
 # ── PIN gate ──────────────────────────────────────────────────────────────────
-
 def render_pin_gate():
-    if st.session_state.get("mgmt_auth", False):
-        return True
-    st.markdown("""
-    <div class="pin-box">
-        <h2>🔒 Management Access</h2>
-        <p>Enter the 4-digit PIN to continue.</p>
-    </div>
-    """, unsafe_allow_html=True)
-    col = st.columns([1, 1, 1])[1]
+    if st.session_state.get("mgmt_auth",False): return True
+    st.markdown('<div class="pin-box"><h2>🔒 Management Access</h2><p>Enter the 4-digit PIN to continue.</p></div>',unsafe_allow_html=True)
+    col=st.columns([1,1,1])[1]
     with col:
-        pin = st.text_input("PIN", type="password", max_chars=4,
-                            placeholder="• • • •", label_visibility="collapsed")
-        if st.button("🔓 Unlock", use_container_width=True):
-            if pin == MANAGEMENT_PIN:
-                st.session_state["mgmt_auth"] = True
-                st.rerun()
+        pin=st.text_input("PIN",type="password",max_chars=4,placeholder="• • • •",label_visibility="collapsed")
+        if st.button("🔓 Unlock",use_container_width=True):
+            if pin==MANAGEMENT_PIN:
+                st.session_state["mgmt_auth"]=True; st.rerun()
             else:
                 st.error("Incorrect PIN.")
     return False
 
 # ── Main ──────────────────────────────────────────────────────────────────────
-
 def main():
-    if "mgmt_auth" not in st.session_state:
-        st.session_state["mgmt_auth"] = False
-
-    df, err = load_crew_data()
+    if "mgmt_auth" not in st.session_state: st.session_state["mgmt_auth"]=False
+    df,err = load_crew_data()
 
     st.sidebar.title("🔍 Navigation")
-    # Navigation: Task View is public; Team Overview + Project Progress need PIN
-    view = st.sidebar.radio("View", [
-        "👤 Individual",
-        "🔧 Task View",
-        "🔒 Management"
-    ])
+    view=st.sidebar.radio("View",["👤 Individual","🔧 Task View","🔒 Management"])
 
-    sel_week = None; sel_week_lbl = ""; sel_person = None
-    week_labels = {}; persons = []; latest = ""
+    sel_week=None; sel_week_lbl=""; sel_person=None
+    week_labels={}; persons=[]; latest=""
 
     if df is not None:
-        weeks_raw    = sorted(df["Week_Start"].dropna().unique())
-        week_labels  = {w: f"{fmt_date(w)}  (Week {i+1})" for i, w in enumerate(weeks_raw)}
-        week_options = list(week_labels.values())
-        persons      = sorted(df["Person"].unique().tolist())
-        latest       = weeks_raw[-1] if weeks_raw else ""
-
-        if view == "👤 Individual":
+        weeks_raw   = sorted(df["Week_Start"].dropna().unique())
+        week_labels = {w:f"{fmt_date(w)}  (Week {i+1})" for i,w in enumerate(weeks_raw)}
+        week_options= list(week_labels.values())
+        persons     = sorted(df["Person"].unique().tolist())
+        latest      = weeks_raw[-1] if weeks_raw else ""
+        if view=="👤 Individual":
             st.sidebar.markdown("**Select Week:**")
-            sel_week_lbl = st.sidebar.selectbox(
-                "", week_options, index=len(week_options)-1, label_visibility="collapsed")
-            sel_week = next(w for w, lbl in week_labels.items() if lbl == sel_week_lbl)
+            sel_week_lbl=st.sidebar.selectbox("",week_options,index=len(week_options)-1,label_visibility="collapsed")
+            sel_week=next(w for w,lbl in week_labels.items() if lbl==sel_week_lbl)
             st.sidebar.markdown("**Select Person:**")
-            sel_person = st.sidebar.selectbox("", persons, label_visibility="collapsed")
+            sel_person=st.sidebar.selectbox("",persons,label_visibility="collapsed")
 
     st.sidebar.markdown("---")
-    st.sidebar.caption(
-        "**Daily workflow:**\n\n"
-        "1. Import QField → Excel\n"
-        "2. Run **RefreshAppSheet**\n"
-        "3. Run **PushAll**\n"
-        "4. Click Reload ↓"
-    )
+    st.sidebar.caption("**Daily workflow:**\n\n1. Import QField → Excel\n2. Run **RefreshAppSheet**\n3. Run **PushAll**\n4. Click Reload ↓")
     if df is not None:
-        st.sidebar.caption(f"📊 {len(df)} rows · {len(week_labels)} weeks\n\n"
-                           f"🕒 {datetime.now().strftime('%I:%M %p, %d %b %Y')}")
+        st.sidebar.caption(f"📊 {len(df)} rows · {len(week_labels)} weeks\n\n🕒 {datetime.now().strftime('%I:%M %p, %d %b %Y')}")
     if st.sidebar.button("🔄 Clear Cache & Reload"):
-        st.cache_data.clear()
-        st.session_state["mgmt_auth"] = False
-        st.rerun()
+        st.cache_data.clear(); st.session_state["mgmt_auth"]=False; st.rerun()
 
     st.markdown(
-        f'<div class="main-header">'
-        f'<h1>🎯 Fulham Solar Farm — Weekly Targets</h1>'
+        f'<div class="main-header"><h1>🎯 Fulham Solar Farm — Weekly Targets</h1>'
         f'<p>Latest data: {fmt_date(latest) if latest else "—"}'
-        f'  ·  {len(week_labels)} week{"s" if len(week_labels) != 1 else ""} tracked'
-        f'  ·  {len(persons)} crew members</p>'
-        f'</div>', unsafe_allow_html=True)
+        f'  ·  {len(week_labels)} week{"s" if len(week_labels)!=1 else ""} tracked'
+        f'  ·  {len(persons)} crew members</p></div>',unsafe_allow_html=True)
 
-    # ── Task View (public, no PIN) ────────────────────────────
-    if view == "🔧 Task View":
-        render_taskview()
-        return
+    if view=="🔧 Task View":
+        render_taskview(); return
 
-    # ── Management (PIN → Team Overview + Project Progress) ───
-    if view == "🔒 Management":
-        if not render_pin_gate():
-            return
-        st.markdown(
-            '<div class="mgmt-header">'
-            '<span style="font-size:1.2rem;font-weight:700;">🔒 Management Dashboard</span>'
-            '<span style="font-size:0.85rem;opacity:0.7;">Restricted access</span>'
-            '</div>', unsafe_allow_html=True)
-
-        mgmt_tab = st.radio("Section",
-                            ["👥 Team Overview", "📊 Project Progress"],
-                            horizontal=True)
-
-        if mgmt_tab == "👥 Team Overview":
-            if df is None:
-                st.error(f"Could not load crew data: `{err}`")
+    if view=="🔒 Management":
+        if not render_pin_gate(): return
+        st.markdown('<div class="mgmt-header"><span style="font-size:1.2rem;font-weight:700;">🔒 Management Dashboard</span><span style="font-size:.85rem;opacity:.7;">Restricted access</span></div>',unsafe_allow_html=True)
+        mgmt_tab=st.radio("Section",["👥 Team Overview","📊 Project Progress"],horizontal=True)
+        if mgmt_tab=="👥 Team Overview":
+            if df is None: st.error(f"Could not load crew data: `{err}`")
             else:
-                st.sidebar.markdown("**Select Week:**")
                 if week_labels:
-                    mgmt_week_lbl = st.sidebar.selectbox(
-                        "Week (mgmt)", list(week_labels.values()),
-                        index=len(week_labels)-1, label_visibility="collapsed")
-                    mgmt_week = next(w for w, lbl in week_labels.items() if lbl == mgmt_week_lbl)
-                    render_team(df[df["Week_Start"] == mgmt_week].copy(), mgmt_week_lbl)
+                    st.sidebar.markdown("**Select Week:**")
+                    mgmt_wlbl=st.sidebar.selectbox("Week (mgmt)",list(week_labels.values()),index=len(week_labels)-1,label_visibility="collapsed")
+                    mgmt_week=next(w for w,lbl in week_labels.items() if lbl==mgmt_wlbl)
+                    render_team(df[df["Week_Start"]==mgmt_week].copy(),mgmt_wlbl)
         else:
             render_mgmt_progress()
-
         st.markdown("---")
         if st.button("🔒 Lock Management Area"):
-            st.session_state["mgmt_auth"] = False
-            st.rerun()
+            st.session_state["mgmt_auth"]=False; st.rerun()
         return
 
-    # ── Individual (public) ───────────────────────────────────
     if df is None:
-        st.error(f"Could not load crew data.\n\n`{err}`")
-        return
-
+        st.error(f"Could not load crew data.\n\n`{err}`"); return
     if sel_person is None:
         st.info("Select a person from the sidebar.")
     else:
-        df_pw = df[(df["Week_Start"] == sel_week) & (df["Person"] == sel_person)].copy()
-        if len(df_pw) == 0:
-            all_weeks = sorted(df[df["Person"] == sel_person]["Week_Start"].unique())
-            st.warning(f"No data for **{sel_person}** in week `{sel_week}`.\n\nWeeks found: `{all_weeks}`")
+        df_pw=df[(df["Week_Start"]==sel_week)&(df["Person"]==sel_person)].copy()
+        if len(df_pw)==0:
+            all_w=sorted(df[df["Person"]==sel_person]["Week_Start"].unique())
+            st.warning(f"No data for **{sel_person}** in week `{sel_week}`.\n\nWeeks found: `{all_w}`")
         else:
-            render_individual(df_pw, sel_person)
+            render_individual(df_pw,sel_person)
 
-
-if __name__ == "__main__":
+if __name__=="__main__":
     main()
