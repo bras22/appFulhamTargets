@@ -152,6 +152,22 @@ def load_crew_data():
         if col in df.columns: df[col] = df[col].apply(lambda v: safe_num(v, True))
     for col in ["Wk_Achieved","Wk_Target_Real","Wk_Target_Theo","Pct_Real","Remaining_Units","Days_To_Deadline"]:
         if col in df.columns: df[col] = df[col].apply(lambda v: safe_num(v, False))
+    # Fix: Wk_Achieved values like 96 can be corrupted to 960 by the
+    # European-locale CStr() issue. If Wk_Achieved is > 1.5× target but
+    # Wk_Achieved÷10 is ≤ 1.5× target, the value is 10× too large.
+    if "Wk_Target_Real" in df.columns and "Wk_Achieved" in df.columns:
+        def fix_achieved(r):
+            ach = r["Wk_Achieved"]
+            tgt = r["Wk_Target_Real"]
+            if tgt > 0 and ach > tgt * 1.5 and (ach / 10) <= tgt * 1.5:
+                return ach / 10.0
+            return ach
+        df["Wk_Achieved"] = df.apply(fix_achieved, axis=1)
+    # Also fix daily columns the same way (cap at 3× day target heuristic)
+    for col in ["Mon","Tue","Wed","Thu","Fri","Sat"]:
+        if col in df.columns:
+            df[col] = df[col].apply(lambda v: v / 10.0 if v > 700 else v)
+
     df["Pct_Real"] = df.apply(
         lambda r: r["Wk_Achieved"] / r["Wk_Target_Real"] if r["Wk_Target_Real"] > 0 else 0.0, axis=1)
     df["Person"]       = df["Person"].astype(str).str.strip()
@@ -443,10 +459,19 @@ def render_mgmt_progress():
 
     df, err = load_progress_data()
     if df is None:
-        st.warning(
-            f"Progress data not available yet.\n\n"
-            f"Run **PushProgressSheet** (or **PushAll**) in Excel first.\n\n`{err}`"
-        )
+        if "wrong data" in str(err) or "got app tab" in str(err):
+            st.error(
+                "⚠️ The progress tab has stale cached data from a previous session.\n\n"
+                "**Click the button below to reload:**"
+            )
+            if st.button("🔄 Clear Cache & Reload Now", type="primary"):
+                st.cache_data.clear()
+                st.rerun()
+        else:
+            st.warning(
+                f"Progress data not available yet.\n\n"
+                f"Run **PushProgressSheet** (or **PushAll**) in Excel first.\n\n`{err}`"
+            )
         return
 
     # ── Parse all numeric columns robustly ───────────────────
