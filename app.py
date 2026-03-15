@@ -164,25 +164,48 @@ def load_crew_data():
 def load_taskview_data():
     """
     Loads the 'taskview' tab pushed by PushTaskViewSheet.
-    Columns: Task | Week_Start | Day_Target | Wk_Target |
-             Crew_Member | Mon | Tue | Wed | Thu | Fri | Sat |
-             Wk_Total | Wk_Target_Person | Pct_Real | Units_Left |
-             Is_Team_Total | Block_Breakdown | Explanation
+    Guard: if Google Sheets returns the wrong tab (e.g. 'app' tab when
+    'taskview' didn't exist yet), it will have 'Person' column — we detect
+    that and return a helpful error instead of silently showing wrong data.
     """
     df, err = load_tab("taskview")
     if df is None: return None, err
+
+    # Detect wrong-tab scenario: Google Sheets returns first sheet silently
+    if "Person" in df.columns and "Crew_Member" not in df.columns:
+        return None, (
+            "taskview tab not pushed yet — Google Sheets returned the wrong tab.\n"
+            "Run **PushTaskViewSheet** (or **PushAll**) from Excel, then click Reload."
+        )
     if "Crew_Member" not in df.columns:
         return None, f"taskview tab not pushed yet. Columns: {df.columns.tolist()}"
+
     df = df[df["Crew_Member"].astype(str).str.strip() != ""].copy()
-    df["Week_Start"] = df["Week_Start"].apply(parse_date_to_iso) if "Week_Start" in df.columns else None
+
+    # Parse dates
+    if "Week_Start" in df.columns:
+        df["Week_Start"] = df["Week_Start"].apply(parse_date_to_iso)
+
+    # Daily columns (Mon-Sat): max ~700/day per person → is_daily=True
     for col in ["Mon","Tue","Wed","Thu","Fri","Sat"]:
         if col in df.columns: df[col] = df[col].apply(lambda v: safe_num(v, True))
+
+    # Weekly/aggregate columns → is_daily=False
     for col in ["Day_Target","Wk_Target","Wk_Total","Wk_Target_Person","Units_Left"]:
         if col in df.columns: df[col] = df[col].apply(lambda v: safe_num(v, False))
-    if "Pct_Real" in df.columns:
-        df["Pct_Real"] = df["Pct_Real"].apply(lambda v: safe_num(v, False))
+
+    # Pct_Real from TASK VIEW is stored as ±fraction (can be negative = behind).
+    # We recalculate from Wk_Total / Wk_Target_Person to get true completion %.
+    if "Wk_Total" in df.columns and "Wk_Target_Person" in df.columns:
+        df["Pct_Completion"] = df.apply(
+            lambda r: (r["Wk_Total"] / r["Wk_Target_Person"] * 100)
+                      if r["Wk_Target_Person"] > 0 else 0.0, axis=1)
+    else:
+        df["Pct_Completion"] = 0.0
+
     if "Is_Team_Total" in df.columns:
         df["Is_Team_Total"] = df["Is_Team_Total"].astype(str).str.strip()
+
     return df, None
 
 @st.cache_data(ttl=300)
@@ -192,27 +215,25 @@ def load_progress_data():
     if "Task" not in df.columns:
         return None, f"progress tab not pushed yet. Columns: {df.columns.tolist()}"
 
-    # Skip the OVERALL SUMMARY row — check for Row_No or No column,
-    # fall back to filtering by Task name if neither exists.
+    # Skip the OVERALL SUMMARY row
     row_id_col = None
-    if "Row_No" in df.columns:
-        row_id_col = "Row_No"
-    elif "No" in df.columns:
-        row_id_col = "No"
+    if "Row_No" in df.columns: row_id_col = "Row_No"
+    elif "No"    in df.columns: row_id_col = "No"
 
     if row_id_col:
         df = df[df[row_id_col].astype(str).str.strip() != "0"].copy()
     else:
         df = df[~df["Task"].astype(str).str.contains("OVERALL", case=False, na=False)].copy()
 
+    # Drop truly empty task rows
     df = df[df["Task"].astype(str).str.strip() != ""].copy()
+
     for col in ["Total_Required","Completed","Remaining"]:
-        if col in df.columns: df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
     if "Pct_Done" in df.columns:
         df["Pct_Done"] = df["Pct_Done"].apply(lambda v: safe_num(v, False))
     return df, None
-
-# ── Individual crew view ──────────────────────────────────────────────────────
 
 def render_individual(df_pw, person):
     active    = df_pw[df_pw["Wk_Achieved"] > 0]
@@ -352,118 +373,113 @@ def render_mgmt_taskview():
             f"In Excel: select a task in the **TASK VIEW** sheet, then run **PushAll** or **PushTaskViewSheet**.\n\n"
             f"`{err}`"
         )
+        if st.button("🔄 Clear Cache to retry"):
+            st.cache_data.clear()
+            st.rerun()
         return
 
-    tasks   = sorted(df["Task"].dropna().unique().tolist()) if "Task" in df.columns else []
-    weeks   = sorted(df["Week_Start"].dropna().unique().tolist()) if "Week_Start" in df.columns else []
-
+    tasks  = sorted(df["Task"].dropna().unique().tolist()) if "Task" in df.columns else []
+    weeks  = sorted(df["Week_Start"].dropna().unique().tolist()) if "Week_Start" in df.columns else []
     if not tasks:
-        st.warning("No tasks found in the taskview tab.")
+        st.warning("No tasks found. Push the TASK VIEW sheet from Excel.")
         return
 
-    col1, col2 = st.columns(2)
-    with col1:
-        sel_task = st.selectbox("Task", tasks)
-    with col2:
-        sel_week = st.selectbox(
-            "Week", weeks,
-            format_func=lambda w: fmt_date(w) if w else str(w),
-            index=len(weeks) - 1 if weeks else 0
-        )
+    c1, c2 = st.columns(2)
+    with c1: sel_task = st.selectbox("Task", tasks)
+    with c2:
+        sel_week = st.selectbox("Week", weeks,
+                                format_func=lambda w: fmt_date(w) if w else str(w),
+                                index=len(weeks) - 1 if weeks else 0)
 
     df_tv = df[(df["Task"] == sel_task) & (df["Week_Start"] == sel_week)].copy()
-
     if df_tv.empty:
         st.warning(f"No data for **{sel_task}** in week `{sel_week}`. Push the TASK VIEW sheet from Excel.")
         return
 
-    # ── Summary row (team total) ──────────────────────────
-    team_row = df_tv[df_tv["Is_Team_Total"] == "1"] if "Is_Team_Total" in df_tv.columns else pd.DataFrame()
-    crew_rows = df_tv[df_tv["Is_Team_Total"] != "1"].copy() if "Is_Team_Total" in df_tv.columns else df_tv.copy()
+    team_row  = df_tv[df_tv.get("Is_Team_Total", pd.Series(["0"]*len(df_tv))).astype(str) == "1"]
+    crew_rows = df_tv[df_tv.get("Is_Team_Total", pd.Series(["0"]*len(df_tv))).astype(str) != "1"].copy()
 
-    day_tgt  = safe_num(df_tv["Day_Target"].iloc[0]) if "Day_Target" in df_tv.columns else 0
-    wk_tgt   = safe_num(df_tv["Wk_Target"].iloc[0])  if "Wk_Target"  in df_tv.columns else 0
+    day_tgt = safe_num(df_tv["Day_Target"].iloc[0]) if "Day_Target" in df_tv.columns else 0
+    wk_tgt  = safe_num(df_tv["Wk_Target"].iloc[0])  if "Wk_Target"  in df_tv.columns else 0
 
+    # ── Team summary cards ──────────────────────────────
     if len(team_row):
         tr       = team_row.iloc[0]
         team_tot = safe_num(tr.get("Wk_Total", 0), False)
         team_pct = (team_tot / wk_tgt * 100) if wk_tgt > 0 else 0.0
         lbl, badge, ccls = status_info(team_pct)
+
         c1, c2, c3, c4 = st.columns(4)
         with c1:
-            st.markdown(f'<div class="summary-card"><div class="label">Task</div>'
-                        f'<div class="value blue" style="font-size:1rem;">{sel_task}</div></div>',
-                        unsafe_allow_html=True)
+            st.markdown(f'''<div class="summary-card"><div class="label">Task</div>
+<div class="value blue" style="font-size:1rem;">{sel_task}</div></div>''', unsafe_allow_html=True)
         with c2:
-            st.markdown(f'<div class="summary-card"><div class="label">Team Total This Week</div>'
-                        f'<div class="value {ccls}">{team_tot:.0f}</div></div>', unsafe_allow_html=True)
+            st.markdown(f'''<div class="summary-card"><div class="label">Team Total This Week</div>
+<div class="value {ccls}">{team_tot:.0f}</div></div>''', unsafe_allow_html=True)
         with c3:
-            st.markdown(f'<div class="summary-card"><div class="label">Weekly Target</div>'
-                        f'<div class="value blue">{wk_tgt:.0f}</div></div>', unsafe_allow_html=True)
+            st.markdown(f'''<div class="summary-card"><div class="label">Weekly Target</div>
+<div class="value blue">{wk_tgt:.0f}</div></div>''', unsafe_allow_html=True)
         with c4:
-            st.markdown(f'<div class="summary-card"><div class="label">Team Completion</div>'
-                        f'<div class="value {ccls}">{team_pct:.1f}%</div></div>', unsafe_allow_html=True)
-        st.markdown(f"<br>", unsafe_allow_html=True)
+            st.markdown(f'''<div class="summary-card"><div class="label">Team Completion</div>
+<div class="value {ccls}">{team_pct:.1f}%</div></div>''', unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
         st.markdown(prog_bar(team_pct), unsafe_allow_html=True)
-        st.caption(f"Day target: **{day_tgt:.0f}** units  ·  Week target: **{wk_tgt:.0f}** units")
-
+        st.caption(f"Day target: **{day_tgt:.0f}** units/crew  ·  Week target: **{wk_tgt:.0f}** total units")
     st.markdown("---")
 
-    # ── Active crew cards ─────────────────────────────────
-    active_crew   = crew_rows[crew_rows["Wk_Total"] > 0].sort_values("Wk_Total", ascending=False)
-    inactive_crew = crew_rows[crew_rows["Wk_Total"] == 0].sort_values("Crew_Member")
+    # ── Crew cards ────────────────────────────────────────
+    active_crew   = crew_rows[crew_rows["Pct_Completion"] > 0].sort_values("Pct_Completion", ascending=False)
+    inactive_crew = crew_rows[crew_rows["Pct_Completion"] <= 0].sort_values("Crew_Member")
 
     if len(active_crew):
         st.subheader(f"🔥 Active Crew ({len(active_crew)})")
         cols = st.columns(4)
-        for i, row in active_crew.iterrows():
-            wk_tot  = safe_num(row.get("Wk_Total", 0))
+        for idx, (_, row) in enumerate(active_crew.iterrows()):
+            pct      = row["Pct_Completion"]
+            wk_tot   = safe_num(row.get("Wk_Total", 0))
             wk_tgt_p = safe_num(row.get("Wk_Target_Person", 0))
-            pct = (wk_tot / wk_tgt_p * 100) if wk_tgt_p > 0 else 0.0
             lbl, badge, ccls = status_info(pct)
-            with cols[i % 4]:
+            with cols[idx % 4]:
                 st.markdown(
-                    f'<div class="crew-card">'
-                    f'<div class="crew-name">{row["Crew_Member"]}</div>'
-                    f'<div class="big-pct {ccls}">{pct:.1f}%</div>'
-                    f'{prog_bar(pct)}'
-                    f'<div style="font-size:0.8rem;color:#aaa;margin-top:0.3rem;">'
-                    f'{wk_tot:.1f} / {wk_tgt_p:.1f} units</div>'
-                    f'<span class="badge {badge}">{lbl}</span>'
-                    f'</div>', unsafe_allow_html=True)
+                    f'''<div class="crew-card">
+<div class="crew-name">{row["Crew_Member"]}</div>
+<div class="big-pct {ccls}">{pct:.1f}%</div>
+{prog_bar(pct)}
+<div style="font-size:0.8rem;color:#aaa;margin-top:0.3rem;">{wk_tot:.1f} / {wk_tgt_p:.1f} units</div>
+<span class="badge {badge}">{lbl}</span>
+</div>''', unsafe_allow_html=True)
 
-    # ── Detailed table ────────────────────────────────────
+    # ── Daily breakdown table ─────────────────────────────
     if len(active_crew):
         st.markdown("---")
         st.subheader("📊 Daily Breakdown")
         show_cols = [c for c in ["Crew_Member","Mon","Tue","Wed","Thu","Fri","Sat",
-                                 "Wk_Total","Wk_Target_Person","Units_Left"] if c in active_crew.columns]
-        df_display = active_crew[show_cols].copy()
-        # Format numerics to 1dp
-        for col in [c for c in show_cols if c != "Crew_Member"]:
-            df_display[col] = df_display[col].apply(lambda x: f"{float(x):.1f}" if str(x) not in ("", "nan") else "—")
-        st.dataframe(df_display.rename(columns={"Crew_Member": "Crew",
-                                                  "Wk_Total": "Week Total",
-                                                  "Wk_Target_Person": "Target",
-                                                  "Units_Left": "Remaining"}),
-                     use_container_width=True, hide_index=True)
+                                 "Wk_Total","Wk_Target_Person","Units_Left","Pct_Completion"]
+                     if c in active_crew.columns]
+        df_disp = active_crew[show_cols].copy()
+        for col in [c for c in show_cols if c not in ("Crew_Member",)]:
+            df_disp[col] = df_disp[col].apply(
+                lambda x: f"{float(x):.1f}%" if col == "Pct_Completion"
+                          else (f"{float(x):.1f}" if str(x) not in ("","nan") else "—"))
+        st.dataframe(df_disp.rename(columns={
+            "Crew_Member":"Crew", "Wk_Total":"Week Total",
+            "Wk_Target_Person":"Target", "Units_Left":"Remaining",
+            "Pct_Completion":"% Done"}),
+            use_container_width=True, hide_index=True)
 
-    # ── Explanation detail ────────────────────────────────
     if "Explanation" in active_crew.columns and len(active_crew):
-        with st.expander("📝 Calculation Detail (active crew)", expanded=False):
+        with st.expander("📝 Calculation Detail", expanded=False):
             for _, row in active_crew.iterrows():
-                expl = str(row.get("Explanation", "")).replace(" | ", "\n").strip()
-                if expl and expl.lower() not in ("nan", "0", ""):
+                expl = str(row.get("Explanation","")).replace(" | ","\n").strip()
+                if expl and expl.lower() not in ("nan","0",""):
                     st.markdown(f"**{row['Crew_Member']}**")
                     st.code(expl, language=None)
 
-    # ── Inactive crew ─────────────────────────────────────
     if len(inactive_crew):
         with st.expander(f"👻 {len(inactive_crew)} crew with no activity this week"):
             for _, row in inactive_crew.iterrows():
                 st.markdown(f"- {row['Crew_Member']}")
 
-# ── Management: PROJECT PROGRESS ─────────────────────────────────────────────
 
 def render_mgmt_progress():
     st.markdown("## 📊 Project Progress")
@@ -476,11 +492,10 @@ def render_mgmt_progress():
         )
         return
 
-    # ── Overall summary from raw tab ─────────────────────
+    # ── Overall summary ───────────────────────────────────
     df_raw, _ = load_tab("progress")
-    overall = pd.DataFrame()
+    overall   = pd.DataFrame()
     if df_raw is not None:
-        # Try Row_No column first (new VBA), then No (old VBA), then Task contains OVERALL
         if "Row_No" in df_raw.columns:
             overall = df_raw[df_raw["Row_No"].astype(str).str.strip() == "0"]
         elif "No" in df_raw.columns:
@@ -489,7 +504,7 @@ def render_mgmt_progress():
             overall = df_raw[df_raw["Task"].astype(str).str.contains("OVERALL", case=False, na=False)]
 
     if len(overall):
-        or_       = overall.iloc[0]
+        or_        = overall.iloc[0]
         total_req  = safe_num(or_.get("Total_Required", 0))
         total_done = safe_num(or_.get("Completed", 0))
         total_rem  = safe_num(or_.get("Remaining", 0))
@@ -497,45 +512,67 @@ def render_mgmt_progress():
         deadline   = str(or_.get("Deadline", ""))
         days_left  = str(or_.get("Days_Left", ""))
 
+        # Parse days_left display — strip "DAYS TO DEADLINE: " prefix if present
+        days_display = days_left.replace("DAYS TO DEADLINE:", "").strip()
+
         c1, c2, c3, c4 = st.columns(4)
         with c1:
-            st.markdown(f'<div class="summary-card"><div class="label">Total Required</div>'
-                        f'<div class="value blue">{total_req:,.0f}</div></div>', unsafe_allow_html=True)
+            st.markdown(
+                f'''<div class="summary-card"><div class="label">Total Required</div>
+<div class="value blue">{total_req:,.0f}</div></div>''', unsafe_allow_html=True)
         with c2:
-            st.markdown(f'<div class="summary-card"><div class="label">Completed</div>'
-                        f'<div class="value green">{total_done:,.0f}</div></div>', unsafe_allow_html=True)
+            st.markdown(
+                f'''<div class="summary-card"><div class="label">Completed</div>
+<div class="value green">{total_done:,.0f}</div></div>''', unsafe_allow_html=True)
         with c3:
-            clr = "green" if ov_pct >= 50 else "amber"
-            st.markdown(f'<div class="summary-card"><div class="label">Overall % Done</div>'
-                        f'<div class="value {clr}">{ov_pct:.1f}%</div></div>', unsafe_allow_html=True)
+            st.markdown(
+                f'''<div class="summary-card"><div class="label">Remaining</div>
+<div class="value {"amber" if total_rem > 0 else "green"}">{total_rem:,.0f}</div></div>''',
+                unsafe_allow_html=True)
         with c4:
-            st.markdown(f'<div class="summary-card"><div class="label">Deadline / Days Left</div>'
-                        f'<div class="value grey" style="font-size:1rem;">'
-                        f'{deadline}<br><span style="font-size:1.4rem;">{days_left}</span>'
-                        f'</div></div>', unsafe_allow_html=True)
-
+            clr = "green" if ov_pct >= 80 else ("amber" if ov_pct >= 40 else "red")
+            st.markdown(
+                f'''<div class="summary-card"><div class="label">Overall % Done</div>
+<div class="value {clr}">{ov_pct:.1f}%</div></div>''', unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown(prog_bar(ov_pct), unsafe_allow_html=True)
+
+        c5, c6 = st.columns(2)
+        with c5:
+            st.info(f"🗓 **Deadline:** {fmt_date(parse_date_to_iso(deadline)) if deadline else '—'}")
+        with c6:
+            st.info(f"⏳ **Days to Deadline:** {days_display}")
         st.markdown("---")
 
     # ── Task table ────────────────────────────────────────
-    # Accept either Row_No or No as the row identifier column
     id_col = "Row_No" if "Row_No" in df.columns else ("No" if "No" in df.columns else None)
-    display_cols = ([id_col] if id_col else []) + \
-        [c for c in ["Task","Total_Required","Completed","Remaining","Pct_Done",
-                     "Rate_2wk","Reqd_Rate","Proj_Finish","Status"] if c in df.columns]
+    display_cols = ([id_col] if id_col else []) +         [c for c in ["Task","Total_Required","Completed","Remaining",
+                     "Pct_Done","Rate_2wk","Reqd_Rate","Proj_Finish","Status"]
+         if c in df.columns]
     df_show = df[display_cols].copy()
 
+    # Format numbers
+    for col in ["Total_Required","Completed","Remaining"]:
+        if col in df_show.columns:
+            df_show[col] = df_show[col].apply(
+                lambda x: f"{float(x):,.0f}" if str(x) not in ("","nan","—") else "—")
     if "Pct_Done" in df_show.columns:
-        df_show["Pct_Done"] = (df_show["Pct_Done"] * 100).round(1).astype(str) + "%"
+        df_show["Pct_Done"] = df_show["Pct_Done"].apply(
+            lambda x: f"{float(x)*100:.1f}%" if str(x) not in ("","nan","—") else "—")
 
     def colour_status(val):
         s = str(val)
-        if "On Track" in s:   return "background-color:#1a4b2e;color:#7dffb3"
-        elif "At Risk" in s:  return "background-color:#4b3a00;color:#ffd54f"
+        if "On Track"  in s: return "background-color:#1a4b2e;color:#7dffb3"
+        elif "At Risk"  in s: return "background-color:#4b3a00;color:#ffd54f"
         elif "Complete" in s: return "background-color:#1a3a1a;color:#7dffb3"
-        elif "Behind" in s:   return "background-color:#4b1a1a;color:#ff8a8a"
+        elif "Behind"   in s: return "background-color:#4b1a1a;color:#ff8a8a"
+        elif "No QField" in s: return "background-color:#2a2a3e;color:#888"
         return ""
+
+    renames = {id_col: "#", "Pct_Done": "% Done", "Rate_2wk": "Rate/day (2wk)",
+               "Reqd_Rate": "Reqd Rate", "Proj_Finish": "Proj. Finish",
+               "Total_Required": "Total Req", "Wk_Target_Person": "Target"}
+    df_show = df_show.rename(columns={k: v for k, v in renames.items() if k in df_show.columns})
 
     if "Status" in df_show.columns:
         st.dataframe(df_show.style.applymap(colour_status, subset=["Status"]),
@@ -543,19 +580,20 @@ def render_mgmt_progress():
     else:
         st.dataframe(df_show, use_container_width=True, hide_index=True)
 
-    # ── Explanation detail ────────────────────────────────
+    # ── Explanation detail ─────────────────────────────────
     if "Explanation" in df.columns:
         st.markdown("---")
-        st.subheader("📝 Calculation Detail")
+        st.subheader("📝 Detail per Task")
         for _, row in df.iterrows():
-            status_str = str(row.get("Status", ""))
+            status_str   = str(row.get("Status",""))
             badge_cls, icon = progress_status(status_str)
-            task = str(row.get("Task", ""))
+            task = str(row.get("Task",""))
+            if not task or task.lower() in ("nan",""):
+                continue
             with st.expander(f"{icon} **{task}** — {status_str}"):
-                expl = str(row.get("Explanation", "")).replace(" | ", "\n")
+                expl = str(row.get("Explanation","")).replace(" | ","\n")
                 st.code(expl, language=None)
 
-# ── PIN gate ──────────────────────────────────────────────────────────────────
 
 def render_pin_gate():
     if st.session_state.get("mgmt_auth", False):
