@@ -426,11 +426,24 @@ def render_mgmt_progress():
 
     df, err = load_progress_data()
     if df is None:
-        st.warning(f"Progress data not available yet.\n\n"
-                   f"Run **PushProgressSheet** (or **PushAll**) in Excel first.\n\n`{err}`")
+        st.warning(
+            f"Progress data not available yet.\n\n"
+            f"Run **PushProgressSheet** (or **PushAll**) in Excel first.\n\n`{err}`"
+        )
         return
 
-    # ── Overall summary row ───────────────────────────────
+    # ── Parse all numeric columns robustly ───────────────────
+    # Values from Excel may arrive as plain integers (22296),
+    # fractions (0.313), or European-corrupted strings (22.296.000).
+    for col in ["Total_Required", "Completed", "Remaining"]:
+        if col in df.columns:
+            df[col] = df[col].apply(lambda v: safe_num(v, is_daily=False))
+
+    if "Pct_Done" in df.columns:
+        # Stored as fraction 0.313 — convert to display %
+        df["Pct_Done"] = df["Pct_Done"].apply(lambda v: safe_num(v, is_daily=False))
+
+    # ── Overall summary row ───────────────────────────────────
     df_raw, _ = load_tab("progress")
     overall = pd.DataFrame()
     if df_raw is not None:
@@ -441,6 +454,9 @@ def render_mgmt_progress():
         if len(overall) == 0 and "Task" in df_raw.columns:
             overall = df_raw[df_raw["Task"].astype(str).str.contains("OVERALL", case=False, na=False)]
 
+    total_req  = 0.0; total_done = 0.0; total_rem = 0.0
+    ov_pct     = 0.0; deadline   = "";  days_left = ""
+
     if len(overall):
         or_        = overall.iloc[0]
         total_req  = safe_num(or_.get("Total_Required", 0))
@@ -449,83 +465,128 @@ def render_mgmt_progress():
         ov_pct     = safe_num(or_.get("Pct_Done", 0)) * 100
         deadline   = str(or_.get("Deadline", ""))
         days_left  = str(or_.get("Days_Left", "")).replace("DAYS TO DEADLINE:", "").strip()
-
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            st.markdown(f'<div class="summary-card"><div class="label">Total Required</div>'
-                        f'<div class="value blue">{total_req:,.0f}</div></div>', unsafe_allow_html=True)
-        with c2:
-            st.markdown(f'<div class="summary-card"><div class="label">Completed</div>'
-                        f'<div class="value green">{total_done:,.0f}</div></div>', unsafe_allow_html=True)
-        with c3:
-            clr = "green" if ov_pct >= 80 else ("amber" if ov_pct >= 40 else "red")
-            st.markdown(f'<div class="summary-card"><div class="label">Overall % Done</div>'
-                        f'<div class="value {clr}">{ov_pct:.1f}%</div></div>', unsafe_allow_html=True)
-        with c4:
-            st.markdown(f'<div class="summary-card"><div class="label">Remaining</div>'
-                        f'<div class="value amber">{total_rem:,.0f}</div></div>', unsafe_allow_html=True)
-
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown(prog_bar(ov_pct), unsafe_allow_html=True)
-
-        ci1, ci2 = st.columns(2)
-        with ci1:
-            dl_fmt = fmt_date(parse_date_to_iso(deadline)) if deadline else "—"
-            st.info(f"🗓 **Deadline:** {dl_fmt}")
-        with ci2:
-            st.info(f"⏳ **Days to Deadline:** {days_left}")
-        st.markdown("---")
-
-    # ── Task table ────────────────────────────────────────
-    id_col = "Row_No" if "Row_No" in df.columns else ("No" if "No" in df.columns else None)
-    display_cols = ([id_col] if id_col else []) + \
-        [c for c in ["Task","Total_Required","Completed","Remaining",
-                     "Pct_Done","Rate_2wk","Reqd_Rate","Proj_Finish","Status"]
-         if c in df.columns]
-    df_show = df[display_cols].copy()
-
-    for col in ["Total_Required","Completed","Remaining"]:
-        if col in df_show.columns:
-            df_show[col] = df_show[col].apply(
-                lambda x: f"{float(x):,.0f}" if str(x) not in ("","nan","—") else "—")
-    if "Pct_Done" in df_show.columns:
-        df_show["Pct_Done"] = df_show["Pct_Done"].apply(
-            lambda x: f"{float(x)*100:.1f}%" if str(x) not in ("","nan","—") else "—")
-
-    def colour_status(val):
-        s = str(val)
-        if "On Track"   in s: return "background-color:#1a4b2e;color:#7dffb3"
-        elif "At Risk"  in s: return "background-color:#4b3a00;color:#ffd54f"
-        elif "Complete" in s: return "background-color:#1a3a1a;color:#7dffb3"
-        elif "Behind"   in s: return "background-color:#4b1a1a;color:#ff8a8a"
-        elif "No QField" in s: return "background-color:#2a2a3e;color:#888"
-        return ""
-
-    renames = {id_col: "#", "Pct_Done": "% Done", "Rate_2wk": "Rate/day (2wk)",
-               "Reqd_Rate": "Reqd Rate", "Proj_Finish": "Proj. Finish",
-               "Total_Required": "Total Req"}
-    df_show = df_show.rename(columns={k: v for k, v in renames.items() if k in df_show.columns})
-
-    if "Status" in df_show.columns:
-        st.dataframe(df_show.style.applymap(colour_status, subset=["Status"]),
-                     use_container_width=True, hide_index=True)
     else:
-        st.dataframe(df_show, use_container_width=True, hide_index=True)
+        # Calculate from task rows if overall row missing
+        total_req  = df["Total_Required"].sum()
+        total_done = df["Completed"].sum()
+        total_rem  = total_req - total_done
+        ov_pct     = (total_done / total_req * 100) if total_req > 0 else 0.0
 
+    # ── Summary cards ─────────────────────────────────────────
+    clr_pct = "green" if ov_pct >= 80 else ("amber" if ov_pct >= 40 else "red")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.markdown(
+            f'''<div class="summary-card"><div class="label">Total Required</div>
+<div class="value blue">{total_req:,.0f}</div></div>''', unsafe_allow_html=True)
+    with c2:
+        st.markdown(
+            f'''<div class="summary-card"><div class="label">Completed</div>
+<div class="value green">{total_done:,.0f}</div></div>''', unsafe_allow_html=True)
+    with c3:
+        st.markdown(
+            f'''<div class="summary-card"><div class="label">Remaining</div>
+<div class="value amber">{total_rem:,.0f}</div></div>''', unsafe_allow_html=True)
+    with c4:
+        st.markdown(
+            f'''<div class="summary-card"><div class="label">Overall % Done</div>
+<div class="value {clr_pct}">{ov_pct:.1f}%</div></div>''', unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown(prog_bar(ov_pct), unsafe_allow_html=True)
+
+    ci1, ci2 = st.columns(2)
+    with ci1:
+        dl_fmt = fmt_date(parse_date_to_iso(deadline)) if deadline else "—"
+        st.info(f"🗓 **Deadline:** {dl_fmt}")
+    with ci2:
+        st.info(f"⏳ **Days to Deadline:** {days_left if days_left else '—'}")
+
+    st.markdown("---")
+
+    # ── Per-task cards ─────────────────────────────────────────
+    # Status colours and icons
+    def task_status_style(status):
+        s = str(status)
+        if "On Track"    in s: return "green",  "🟢"
+        elif "At Risk"   in s: return "amber",  "🟡"
+        elif "Behind"    in s: return "red",    "🔴"
+        elif "No QField" in s: return "grey",   "⚪"
+        else:                  return "grey",   "⚪"
+
+    # Lay out tasks in 2-column grid
+    task_rows = [row for _, row in df.iterrows()
+                 if str(row.get("Task","")).strip() not in ("","nan")]
+
+    for i in range(0, len(task_rows), 2):
+        cols = st.columns(2)
+        for col_idx, row in enumerate(task_rows[i:i+2]):
+            task      = str(row.get("Task",""))
+            req       = row["Total_Required"]   if "Total_Required" in df.columns else 0
+            done      = row["Completed"]        if "Completed"      in df.columns else 0
+            rem       = row["Remaining"]        if "Remaining"      in df.columns else 0
+            pct_raw   = row["Pct_Done"]         if "Pct_Done"       in df.columns else 0
+            pct       = pct_raw * 100           # stored as fraction
+            rate_2wk  = str(row.get("Rate_2wk",  "—"))
+            reqd_rate = str(row.get("Reqd_Rate",  "—"))
+            proj_fin  = str(row.get("Proj_Finish","—"))
+            status    = str(row.get("Status",     "—"))
+            row_no    = str(row.get("Row_No", row.get("No", "")))
+
+            clr, icon = task_status_style(status)
+            cap       = min(float(pct), 100)
+            bar_c     = "#4dff91" if pct >= 80 else ("#ffd54f" if pct >= 50 else "#ff6b6b")
+
+            # Skip tasks with no QField data — show greyed card
+            no_data = "No QField" in status or done == 0 and req > 0 and pct == 0
+
+            with cols[col_idx]:
+                st.markdown(f"""
+<div style="background:#1e1e2e;border-radius:10px;padding:1.2rem;
+            border:1px solid rgba(255,255,255,0.08);margin-bottom:1rem;">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.6rem;">
+    <span style="font-weight:700;font-size:0.95rem;color:#e0e0e0;">
+      {row_no}. {task}
+    </span>
+    <span style="font-size:0.8rem;font-weight:700;color:{'#4dff91' if clr=='green' else '#ffd54f' if clr=='amber' else '#ff6b6b' if clr=='red' else '#888'};">
+      {icon} {status}
+    </span>
+  </div>
+  <div style="background:#2a2a3e;border-radius:6px;height:10px;overflow:hidden;margin-bottom:0.6rem;">
+    <div style="width:{cap:.1f}%;height:100%;background:{bar_c};border-radius:6px;"></div>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.3rem;font-size:0.8rem;text-align:center;margin-bottom:0.5rem;">
+    <div><span style="color:#aaa;display:block;">Required</span>
+         <span style="font-weight:700;color:#7ddfff;">{req:,.0f}</span></div>
+    <div><span style="color:#aaa;display:block;">Done</span>
+         <span style="font-weight:700;color:#4dff91;">{done:,.0f}</span></div>
+    <div><span style="color:#aaa;display:block;">% Done</span>
+         <span style="font-weight:700;color:{'#4dff91' if pct>=80 else '#ffd54f' if pct>=40 else '#ff6b6b'};">{pct:.1f}%</span></div>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.3rem;font-size:0.78rem;text-align:center;">
+    <div><span style="color:#aaa;display:block;">Rate/day</span>
+         <span style="color:#e0e0e0;">{rate_2wk}</span></div>
+    <div><span style="color:#aaa;display:block;">Req'd Rate</span>
+         <span style="color:#e0e0e0;">{reqd_rate}</span></div>
+    <div><span style="color:#aaa;display:block;">Proj. Finish</span>
+         <span style="color:#e0e0e0;">{proj_fin}</span></div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+    # ── Detail expanders ──────────────────────────────────────
     if "Explanation" in df.columns:
         st.markdown("---")
-        st.subheader("📝 Detail per Task")
+        st.subheader("📝 Calculation Detail")
         for _, row in df.iterrows():
             status_str = str(row.get("Status",""))
-            badge_cls, icon = progress_status(status_str)
-            task = str(row.get("Task",""))
+            _, icon    = task_status_style(status_str)
+            task       = str(row.get("Task",""))
             if not task or task.lower() in ("nan",""):
                 continue
             with st.expander(f"{icon} **{task}** — {status_str}"):
                 expl = str(row.get("Explanation","")).replace(" | ","\n")
                 st.code(expl, language=None)
-
-# ── PIN gate ──────────────────────────────────────────────────────────────────
 
 def render_pin_gate():
     if st.session_state.get("mgmt_auth", False):
