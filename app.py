@@ -109,12 +109,6 @@ def safe_num(v, is_daily=False):
     try:    return float(s)
     except: return 0.0
 
-def fix_10x(ach, tgt):
-    """Fix Wk_Achieved values 10× too large due to legacy CStr() VBA locale bug."""
-    if tgt > 0 and ach > tgt * 1.05 and (ach / 10.0) <= tgt:
-        return ach / 10.0
-    return ach
-
 def task_status_style(status):
     s = str(status)
     if "On Track"    in s: return "green",  "🟢"
@@ -154,19 +148,8 @@ def load_crew_data():
         if col in df.columns: df[col] = df[col].apply(lambda v: safe_num(v, True))
     for col in ["Wk_Achieved","Wk_Target_Real","Wk_Target_Theo","Pct_Real","Remaining_Units","Days_To_Deadline"]:
         if col in df.columns: df[col] = df[col].apply(lambda v: safe_num(v, False))
-    # Defensive fix for any pre-VBA-fix data still in the sheet.
-    # Once the updated VBA (NumStr with locale-safe decimal) is used,
-    # this correction will never trigger since values will be clean.
-    if "Wk_Target_Real" in df.columns:
-        def fix_row_values(row):
-            tgt = row["Wk_Target_Real"]
-            if "Wk_Achieved" in row.index:
-                row["Wk_Achieved"] = fix_10x(row["Wk_Achieved"], tgt)
-            for col in ["Mon","Tue","Wed","Thu","Fri","Sat"]:
-                if col in row.index and tgt > 0 and row[col] > tgt * 1.05 and (row[col] / 10.0) <= tgt:
-                    row[col] = row[col] / 10.0
-            return row
-        df = df.apply(fix_row_values, axis=1)
+    # No 10x correction needed — VBA now uses NumStr() with explicit
+    # decimal separator fix, so all values arrive as clean numbers.
     df["Pct_Real"] = df.apply(
         lambda r: r["Wk_Achieved"] / r["Wk_Target_Real"] if r["Wk_Target_Real"] > 0 else 0.0, axis=1)
     df["Person"]       = df["Person"].astype(str).str.strip()
@@ -187,10 +170,15 @@ def load_progress_data():
     SHEET_ID = "1_eWq5Mx9zBfKfkqP56wqH3uLnwbv3k714t0dztzOEo4"
 
     def _is_progress_df(df):
-        """Return True only if df looks like the progress tab."""
-        has_id  = "Row_No" in df.columns or "No" in df.columns
-        has_app = "Person" in df.columns and "Week_Start" in df.columns
-        return has_id and not has_app and "Task" in df.columns
+        """
+        Return True if df looks like the progress tab.
+        We only need to confirm it's NOT the app tab and HAS a Task column.
+        The app tab always has Person+Week_Start columns; progress never does.
+        """
+        is_app_tab = "Person" in df.columns and "Week_Start" in df.columns
+        has_task   = "Task" in df.columns
+        # Accept if it has Task column and doesn't look like the app tab
+        return has_task and not is_app_tab
 
     def _clean(df):
         df.columns = [str(c).strip() for c in df.columns]
