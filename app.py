@@ -535,7 +535,7 @@ def main():
         if view=="👤 Individual":
             st.sidebar.markdown("**Select Week:**")
             sel_week_lbl=st.sidebar.selectbox("",week_options,index=len(week_options)-1,label_visibility="collapsed")
-            sel_week=next(w for w,lbl in week_labels.items() if lbl==sel_week_lbl)
+            sel_week=next((w for w,lbl in week_labels.items() if lbl==sel_week_lbl), list(week_labels.keys())[-1] if week_labels else None)
             st.sidebar.markdown("**Select Person:**")
             sel_person=st.sidebar.selectbox("",persons,label_visibility="collapsed")
 
