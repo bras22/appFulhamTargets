@@ -67,12 +67,21 @@ def fmt_date(iso):
 
 def parse_date_to_iso(v):
     if v is None: return None
-    s=str(v).strip()
-    if not s or s.lower()=="nan": return None
-    for fmt in ("%Y-%m-%d","%d/%m/%Y","%m/%d/%Y","%d-%m-%Y","%d %b %Y","%d %B %Y"):
-        try:    return datetime.strptime(s,fmt).strftime("%Y-%m-%d")
+    s = str(v).strip()
+    if not s or s.lower() == "nan": return None
+    # Handle Excel date serial numbers (e.g. 46083 = 2026-03-09)
+    # PushAppSheet may send the raw numeric date value if IsDate check fails.
+    # Excel epoch: 1899-12-30. Range 40000-55000 covers ~2009-2036.
+    try:
+        serial = float(s)
+        if 40000 <= serial <= 55000:
+            from datetime import timedelta as _td
+            return (datetime(1899, 12, 30) + _td(days=int(serial))).strftime("%Y-%m-%d")
+    except: pass
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y", "%d %b %Y", "%d %B %Y"):
+        try:    return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
         except: pass
-    try:    return pd.to_datetime(s,dayfirst=False).strftime("%Y-%m-%d")
+    try:    return pd.to_datetime(s, dayfirst=False).strftime("%Y-%m-%d")
     except: return None
 
 def safe_num(v, is_daily=False):
