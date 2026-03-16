@@ -538,13 +538,23 @@ def main():
     if df is not None:
         weeks_raw   = sorted(df["Week_Start"].dropna().unique())
         week_labels = {w:f"{fmt_date(w)}  (Week {i+1})" for i,w in enumerate(weeks_raw)}
+
+        # Default to most recent week that has ANY activity (not current empty week)
+        def _last_active(df, wks):
+            for w in reversed(wks):
+                if df is not None and df[df["Week_Start"]==w]["Wk_Achieved"].sum() > 0:
+                    return w
+            return wks[-1] if wks else None
+        best_week     = _last_active(df, list(weeks_raw))
+        best_week_idx = list(weeks_raw).index(best_week) if best_week in list(weeks_raw) else max(0, len(weeks_raw)-1)
+
         week_options= list(week_labels.values())
         persons     = sorted(df["Person"].unique().tolist())
         latest      = weeks_raw[-1] if weeks_raw else ""
         if view=="👤 Individual":
             st.sidebar.markdown("**Select Week:**")
-            sel_week_lbl=st.sidebar.selectbox("",week_options,index=len(week_options)-1,label_visibility="collapsed")
-            sel_week=next((w for w,lbl in week_labels.items() if lbl==sel_week_lbl), list(week_labels.keys())[-1] if week_labels else None)
+            sel_week_lbl=st.sidebar.selectbox("",week_options,index=best_week_idx,label_visibility="collapsed")
+            sel_week=next((w for w,lbl in week_labels.items() if lbl==sel_week_lbl), best_week)
             st.sidebar.markdown("**Select Person:**")
             sel_person=st.sidebar.selectbox("",persons,label_visibility="collapsed")
 
@@ -573,8 +583,8 @@ def main():
             else:
                 if week_labels:
                     st.sidebar.markdown("**Select Week:**")
-                    mgmt_wlbl=st.sidebar.selectbox("Week (mgmt)",list(week_labels.values()),index=len(week_labels)-1,label_visibility="collapsed")
-                    mgmt_week=next(w for w,lbl in week_labels.items() if lbl==mgmt_wlbl)
+                    mgmt_wlbl=st.sidebar.selectbox("Week (mgmt)",list(week_labels.values()),index=best_week_idx,label_visibility="collapsed")
+                    mgmt_week=next((w for w,lbl in week_labels.items() if lbl==mgmt_wlbl), best_week)
                     render_team(df[df["Week_Start"]==mgmt_week].copy(),mgmt_wlbl)
         else:
             render_mgmt_progress()
