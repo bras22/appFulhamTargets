@@ -556,7 +556,7 @@ def main():
             sel_week_lbl=st.sidebar.selectbox("",week_options,index=best_week_idx,label_visibility="collapsed")
             sel_week=next((w for w,lbl in week_labels.items() if lbl==sel_week_lbl), best_week)
             st.sidebar.markdown("**Select Person:**")
-            sel_person=st.sidebar.selectbox("",persons,label_visibility="collapsed")
+            sel_person=st.sidebar.selectbox("",["— Select a crew member —"]+persons,label_visibility="collapsed")
 
     st.sidebar.markdown("---")
     st.sidebar.caption("**Daily workflow:**\n\n1. Import QField → Excel\n2. Run **RefreshAppSheet**\n3. Run **PushAll**\n4. Click Reload ↓")
@@ -595,8 +595,15 @@ def main():
 
     if df is None:
         st.error(f"Could not load crew data.\n\n`{err}`"); return
-    if sel_person is None:
-        st.info("Select a person from the sidebar.")
+    if sel_person is None or sel_person == "— Select a crew member —":
+        st.markdown(
+            '<div style="text-align:center;padding:4rem 2rem;">'
+            '<div style="font-size:3rem;margin-bottom:1rem;">👷</div>'
+            '<h2 style="color:#e0e0e0;margin-bottom:0.5rem;">Select your name and week</h2>'
+            '<p style="color:#aaa;font-size:1rem;">Use the sidebar on the left to choose a crew member and week,'
+            ' then your personal targets and progress will appear here.</p>'
+            '</div>',
+            unsafe_allow_html=True)
     else:
         df_pw=df[(df["Week_Start"]==sel_week)&(df["Person"]==sel_person)].copy()
         if len(df_pw)==0:
