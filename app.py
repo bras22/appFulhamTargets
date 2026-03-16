@@ -77,33 +77,40 @@ def parse_date_to_iso(v):
 
 def safe_num(v, is_daily=False):
     """
-    Parse a value that may be a clean float, a percentage string,
-    or a European-locale-corrupted number like "959.999.999.999.997".
-    
-    Corruption chain: VBA CStr(96.0) -> "96,0" (comma decimal, AU locale)
-    -> Google Sheets reads comma as thousands sep -> stores 960
-    -> exports as "959.999.999.999.997" (dot thousands seps)
-    -> safe_num: count dots>=2 -> strip dots -> 959999999999997 / 1e12 -> 960.0
-    -> if is_daily and >500: /10 -> 96.0  ✓
-    
-    For weekly totals (is_daily=False) the same corruption gives 960 not 96.
-    We handle that separately in load_crew_data using fix_weekly().
+    Parse a number that may arrive in several corrupted formats due to
+    Google Sheets European locale CSV export:
+      "128,3333"   = comma decimal (locale stores comma as decimal sep)
+      "1.411,7"    = dot thousands + comma decimal
+      "303.333.333.333.333" = old VBA CStr corruption (pre-NumStr fix)
+    The permanent fix is setting the Google Sheets locale to United States,
+    but this function handles all variants as a safety net.
     """
     if v is None: return 0.0
-    s=str(v).strip()
-    if not s or s.lower() in ("nan","—","-",""): return 0.0
+    s = str(v).strip()
+    if not s or s.lower() in ("nan", "—", "-", ""): return 0.0
     if s.endswith("%"):
-        try:    return float(s[:-1])/100.0
+        try:    return float(s[:-1]) / 100.0
         except: return 0.0
-    # Scientific notation like "9,23E+12" — clearly corrupted pct, return 0
+    # Scientific notation — corrupted percentage, ignore
     if "E+" in s.upper() or "E-" in s.upper():
         return 0.0
-    if s.count(".")>=2:
-        digits=s.replace(".","")
+    # Multiple dots = old VBA CStr corruption e.g. "303.333.333.333.333"
+    if s.count(".") >= 2:
+        digits = s.replace(".", "")
         try:
-            val=float(digits)/1e12
-            if is_daily and val>500: val=val/10.0
+            val = float(digits) / 1e12
+            if is_daily and val > 500: val /= 10.0
             return val
+        except: pass
+    # "1.411,7" = dot-thousands + comma-decimal (EU locale)
+    if s.count(",") == 1 and s.count(".") >= 1:
+        try:
+            return float(s.replace(".", "").replace(",", "."))
+        except: pass
+    # "128,333" = comma-decimal only (EU locale, value < 1000)
+    if s.count(",") == 1 and "." not in s:
+        try:
+            return float(s.replace(",", "."))
         except: pass
     try:    return float(s)
     except: return 0.0
