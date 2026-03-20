@@ -179,6 +179,9 @@ def load_crew_data():
 
     # Fix Wk_Achieved: same 10× corruption as daily but is_daily=False so safe_num
     # didn't auto-fix. Use fix_weekly() which compares against Wk_Target_Real.
+    if "Wk_Achieved" in df.columns and "Wk_Target_Real" in df.columns:
+        df["Wk_Achieved"] = df.apply(
+            lambda r: fix_weekly(r["Wk_Achieved"], r["Wk_Target_Real"]), axis=1)
 
     # Recalculate Pct_Real from clean values
     df["Pct_Real"] = df.apply(
@@ -307,8 +310,18 @@ def render_taskview():
     # Wk_Target_Theo = per-crew target = tTpd/tPplPlan × 5.5
     has_task_tgt = "Task_Wk_Target" in df_tv.columns
     task_wk_tgt  = safe_num(df_tv["Task_Wk_Target"].iloc[0]) if has_task_tgt else 0
-    wk_tgt_pp    = safe_num(df_tv["Wk_Target_Theo"].iloc[0]) if "Wk_Target_Theo" in df_tv.columns                    else safe_num(df_tv["Wk_Target_Real"].iloc[0])
     active_count = len(df_tv[df_tv["Wk_Achieved"] > 0])
+    # Per-person target = task total ÷ active crew (2530/3=843.3)
+    # This is the only reliable basis — Wk_Target_Real/Theo from VBA are partial-week values
+    if task_wk_tgt > 0 and active_count > 0:
+        wk_tgt_pp = task_wk_tgt / active_count
+    else:
+        wk_tgt_pp = safe_num(df_tv["Wk_Target_Real"].iloc[0]) \
+                    if "Wk_Target_Real" in df_tv.columns else 0
+    df_tv["Pct_Completion"] = df_tv.apply(
+        lambda r: r["Wk_Achieved"] / wk_tgt_pp * 100 if wk_tgt_pp > 0 else 0.0, axis=1)
+    
+    
     team_total   = df_tv["Wk_Achieved"].sum()
     days_left    = int(df_tv["Days_To_Deadline"].iloc[0]) if "Days_To_Deadline" in df_tv.columns else 0
 
