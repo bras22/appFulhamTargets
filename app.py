@@ -179,9 +179,6 @@ def load_crew_data():
 
     # Fix Wk_Achieved: same 10× corruption as daily but is_daily=False so safe_num
     # didn't auto-fix. Use fix_weekly() which compares against Wk_Target_Real.
-    if "Wk_Achieved" in df.columns and "Wk_Target_Real" in df.columns:
-        df["Wk_Achieved"] = df.apply(
-            lambda r: fix_weekly(r["Wk_Achieved"], r["Wk_Target_Real"]), axis=1)
 
     # Recalculate Pct_Real from clean values
     df["Pct_Real"] = df.apply(
