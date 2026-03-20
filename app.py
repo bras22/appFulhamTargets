@@ -319,9 +319,9 @@ def render_taskview():
         wk_tgt_pp = safe_num(df_tv["Wk_Target_Real"].iloc[0]) \
                     if "Wk_Target_Real" in df_tv.columns else 0
     df_tv["Pct_Completion"] = df_tv.apply(
-        lambda r: r["Wk_Achieved"] / wk_tgt_pp * 100 if wk_tgt_pp > 0 else 0.0, axis=1)
-    
-    
+        lambda r: r["Wk_Achieved"] / r["Wk_Target_Real"] * 100
+                  if r["Wk_Target_Real"] > 0 else 0.0, axis=1)
+ 
     team_total   = df_tv["Wk_Achieved"].sum()
     days_left    = int(df_tv["Days_To_Deadline"].iloc[0]) if "Days_To_Deadline" in df_tv.columns else 0
 
@@ -365,7 +365,7 @@ def render_taskview():
                 st.markdown(
                     f'<div class="crew-card"><div class="crew-name">{row["Person"]}</div>'
                     f'<div class="big-pct {ccls}">{pct:.1f}%</div>{prog_bar(pct)}'
-                    f'<div style="font-size:.8rem;color:#aaa;margin-top:.3rem;">{row["Wk_Achieved"]:.1f} / {wk_tgt_pp:.1f} units</div>'
+                    f'<div style="font-size:.8rem;color:#aaa;margin-top:.3rem;">{row["Wk_Achieved"]:.1f} / {row["Wk_Target_Real"]:.1f} units</div>'
                     f'<span class="badge {badge}">{lbl}</span></div>',unsafe_allow_html=True)
         st.markdown("---")
         st.subheader("📊 Daily Breakdown")
@@ -373,6 +373,14 @@ def render_taskview():
                                "Wk_Achieved","Wk_Target_Real","Remaining_Units","Pct_Completion"]
                   if c in active_crew.columns]
         df_d=active_crew[day_cols].copy()
+        # Build sum row before formatting
+        num_cols = [c for c in day_cols if c not in ("Person","Pct_Completion")]
+        sum_vals = {c: df_d[c].sum() if c in num_cols else
+                       ("TOTAL" if c=="Person" else "") for c in day_cols}
+        s_ach = sum_vals.get("Wk_Achieved", 0)
+        s_tgt = sum_vals.get("Wk_Target_Real", 0)
+        sum_vals["Pct_Completion"] = (s_ach / s_tgt * 100) if s_tgt > 0 else 0.0
+        df_d = pd.concat([df_d, pd.DataFrame([sum_vals])], ignore_index=True)
         for col in [c for c in day_cols if c!="Person"]:
             df_d[col]=df_d[col].apply(
                 lambda x: f"{float(x):.1f}%" if col=="Pct_Completion"
@@ -380,6 +388,7 @@ def render_taskview():
         st.dataframe(df_d.rename(columns={"Person":"Crew","Wk_Achieved":"Week Total",
             "Wk_Target_Real":"Target/Crew","Remaining_Units":"Remaining","Pct_Completion":"% Done"}),
             use_container_width=True,hide_index=True)
+
     if len(inactive_crew):
         with st.expander(f"👻 {len(inactive_crew)} crew with no activity this week"):
             for _,row in inactive_crew.iterrows(): st.markdown(f"- {row['Person']}")
