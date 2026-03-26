@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 st.set_page_config(page_title="Fulham SF – Crew Targets", page_icon="🎯", layout="wide")
 st.markdown("""
@@ -28,32 +28,10 @@ st.markdown("""
     .green{color:#4dff91}.amber{color:#ffd54f}.red{color:#ff6b6b}.grey{color:#888}.blue{color:#7ddfff}
     .prog-wrap{background:#2a2a3e;border-radius:6px;height:12px;overflow:hidden;margin:.4rem 0}
     .prog-bar{height:100%;border-radius:6px}
-    .pin-box{max-width:320px;margin:4rem auto;background:#1e1e2e;border-radius:14px;
-        padding:2.5rem;text-align:center;border:1px solid rgba(255,255,255,0.1)}
-    .pin-box h2{color:#e0e0e0;margin-bottom:1rem}
-    .pin-box p{color:#aaa;font-size:.9rem;margin-bottom:1.5rem}
     .mgmt-header{background:linear-gradient(135deg,#0f3460,#1a2e5e);padding:1.2rem 1.5rem;
         border-radius:10px;color:white;margin-bottom:1.5rem;
         border:1px solid rgba(255,255,255,0.1);
         display:flex;justify-content:space-between;align-items:center}
-    /* ── targets table ── */
-    .tgt-wrap{background:#1e1e2e;border-radius:14px;padding:1.6rem 1.8rem;
-        border:1px solid rgba(255,255,255,0.08);margin-bottom:1.5rem}
-    .tgt-wrap h3{color:#7ddfff;margin:0 0 1rem 0;font-size:1.05rem;font-weight:700}
-    .tgt-table{width:100%;border-collapse:collapse;font-size:.9rem}
-    .tgt-table th{background:#0f3460;color:#7ddfff;padding:.6rem 1.1rem;
-        font-weight:700;font-size:.77rem;letter-spacing:.05em;text-transform:uppercase;
-        border-bottom:2px solid #1a3a6e}
-    .tgt-table th:not(:first-child){text-align:right}
-    .tgt-table td{padding:.55rem 1.1rem;border-bottom:1px solid rgba(255,255,255,0.06);
-        color:#d0d0d0}
-    .tgt-table tr:last-child td{border-bottom:none}
-    .tgt-table tr:nth-child(even) td{background:rgba(255,255,255,0.03)}
-    .tgt-table tr:hover td{background:rgba(125,223,255,0.05)}
-    .tgt-table .num{text-align:right;font-weight:600;font-variant-numeric:tabular-nums;color:#c0c8d8}
-    .tgt-table .sat{text-align:right;font-weight:700;
-        font-variant-numeric:tabular-nums;color:#ffd54f}
-    .tgt-note{color:#555;font-size:.73rem;margin-top:.6rem}
 </style>
 """, unsafe_allow_html=True)
 
@@ -88,8 +66,7 @@ def parse_date_to_iso(v):
     try:
         serial = float(s)
         if 40000 <= serial <= 55000:
-            from datetime import timedelta as _td
-            return (datetime(1899, 12, 30) + _td(days=int(serial))).strftime("%Y-%m-%d")
+            return (datetime(1899, 12, 30) + timedelta(days=int(serial))).strftime("%Y-%m-%d")
     except: pass
     for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y", "%d %b %Y", "%d %B %Y"):
         try:    return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
@@ -128,11 +105,12 @@ def task_status_style(s):
     elif "Behind"  in s: return "red",   "🔴"
     else:                return "grey",  "⚪"
 
-def sat_daily(wk_target_theo):
-    """Daily target to skip Saturday = Wk_Target_Theo / 5.
-    Wk_Target_Theo = tpd/ppl * 5.5  (per-person, plan-based full week).
-    Divide by 5 to get the Mon–Fri daily rate needed to finish without Saturday."""
-    return safe_num(wk_target_theo) / 5.0
+def sat_daily_pp(task_wk_target, people_per_task):
+    """Static daily target per person to finish Mon-Fri without Saturday.
+    = Task_Wk_Target / 5 / people_planned"""
+    ppl = max(int(round(safe_num(people_per_task))), 1)
+    tgt = safe_num(task_wk_target)
+    return tgt / 5.0 / ppl if tgt > 0 else 0.0
 
 # ── Data loading ──────────────────────────────────────────────────────────────
 def _read_csv_tab(url):
@@ -161,7 +139,7 @@ def load_crew_data():
         if col in df.columns:
             df[col] = df[col].apply(lambda v: safe_num(v, True))
     for col in ["Wk_Achieved","Wk_Target_Real","Wk_Target_Theo",
-                "Pct_Real","Remaining_Units","Days_To_Deadline","Task_Wk_Target"]:
+                "Pct_Real","Remaining_Units","Days_To_Deadline","Task_Wk_Target","People_Per_Task"]:
         if col in df.columns:
             df[col] = df[col].apply(lambda v: safe_num(v, False))
     day_sum_cols = [c for c in ["Mon","Tue","Wed","Thu","Fri","Sat"] if c in df.columns]
@@ -202,13 +180,18 @@ def load_progress_data():
         f"Ensure tab is named `progress` (lowercase) and PushProgressSheet has been run."
     )
 
-# ── Targets reference table (from app sheet) ──────────────────────────────────
+@st.cache_data(ttl=300)
+def load_pins_data():
+    for make_url in (gviz_url, export_url):
+        df = _read_csv_tab(make_url("crew_pins"))
+        if df is not None and "Name" in df.columns and "PIN" in df.columns:
+            df["Name"] = df["Name"].astype(str).str.strip()
+            df["PIN"]  = df["PIN"].astype(str).str.strip()
+            return {row["PIN"]: row["Name"] for _, row in df.iterrows()}
+    return {}
+
+# ── Targets reference table ───────────────────────────────────────────────────
 def get_task_targets(df):
-    """One row per task for the reference table.
-    sat_daily  = Task_Wk_Target / 5  (team daily target to finish in 5 days)
-    ppl        = People_Per_Task col (col 18 from VBA). If missing, not shown.
-    pp_daily   = sat_daily / ppl
-    """
     if df is None or df.empty: return None
     task_order = list(dict.fromkeys(df["Task"].tolist()))
     has_ppl = "People_Per_Task" in df.columns
@@ -216,9 +199,9 @@ def get_task_targets(df):
     for task in task_order:
         grp = df[df["Task"] == task]
         if grp.empty: continue
-        task_wk  = grp["Task_Wk_Target"].apply(safe_num).max()
-        weekly   = task_wk if task_wk > 0 else 0.0
-        s_daily  = weekly / 5.0 if weekly > 0 else 0.0
+        task_wk = grp["Task_Wk_Target"].apply(safe_num).max()
+        weekly  = task_wk if task_wk > 0 else 0.0
+        s_daily = weekly / 5.0 if weekly > 0 else 0.0
         if has_ppl:
             ppl = max(1, int(round(safe_num(grp["People_Per_Task"].iloc[0]))))
         else:
@@ -229,40 +212,70 @@ def get_task_targets(df):
     return rows if rows else None
 
 def render_mech_targets_table(df):
-    """Reference table on landing page. Uses st.dataframe for theme compatibility."""
     rows = get_task_targets(df)
     st.markdown("### 📋 Weekly Targets Reference")
     if not rows:
         st.caption("⚠️ No task data yet — run **RefreshAppSheet → PushAll** in Excel.")
         return
-    tbl = pd.DataFrame(rows)
-    def fmt_sat(row):
-        team = row["sat_daily"]
-        ppl  = row["ppl"]
-        pp   = row["pp_daily"]
-        if ppl is None:
-            return f"{team:,.1f}"
-        elif ppl == 1:
-            return f"{team:,.1f}  →  crew of 1"
-        else:
-            return f"{team:,.1f}  →  {pp:,.1f}/person  (crew of {ppl})"
-    tbl["🌞 Sat Off Target / day"] = tbl.apply(fmt_sat, axis=1)
-    tbl["Weekly Target (team)"]    = tbl["weekly_tgt"].map(lambda v: f"{v:,.0f}")
-    tbl = tbl[["Task", "🌞 Sat Off Target / day", "Weekly Target (team)"]]
-    st.dataframe(
-        tbl,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "Task":                    st.column_config.TextColumn("Task", width="large"),
-            "🌞 Sat Off Target / day": st.column_config.TextColumn("🌞 Sat Off Target / day", width="large"),
-            "Weekly Target (team)":    st.column_config.TextColumn("Weekly Target (team)", width="small"),
-        }
+    has_ppl   = rows[0]["ppl"] is not None
+    pp_header = "<th style='text-align:right;color:#7ddfff;font-size:.74rem;padding:.3rem .5rem'>Per Person/day</th>" if has_ppl else ""
+    tr_list   = []
+    for r in rows:
+        pp_cell = (f"<td style='text-align:right;color:#ffd54f;font-weight:700;padding:.28rem .5rem'>"
+                   f"{r['pp_daily']:,.1f}"
+                   f"<span style='color:#555;font-size:.72rem'> ×{r['ppl']}</span></td>") if has_ppl else ""
+        tr_list.append(
+            f"<tr style='border-bottom:1px solid rgba(255,255,255,0.04)'>"
+            f"<td style='padding:.28rem .5rem;color:#d0d0d0'>{r['Task']}</td>"
+            f"<td style='text-align:right;color:#ffd54f;font-weight:700;padding:.28rem .5rem'>{r['sat_daily']:,.1f}</td>"
+            f"{pp_cell}"
+            f"<td style='text-align:right;color:#7ddfff;font-weight:700;padding:.28rem .5rem'>{r['weekly_tgt']:,.0f}</td>"
+            f"</tr>"
+        )
+    st.markdown(
+        f"<div style='background:#1e1e2e;border-radius:10px;padding:.7rem 1rem;"
+        f"border:1px solid rgba(255,255,255,0.08);margin-bottom:1rem'>"
+        f"<table style='width:100%;border-collapse:collapse;font-size:.83rem'>"
+        f"<thead><tr style='border-bottom:1px solid #1a3a6e'>"
+        f"<th style='text-align:left;color:#7ddfff;font-size:.74rem;padding:.3rem .5rem'>Task</th>"
+        f"<th style='text-align:right;color:#7ddfff;font-size:.74rem;padding:.3rem .5rem'>Team/day 🌞</th>"
+        f"{pp_header}"
+        f"<th style='text-align:right;color:#7ddfff;font-size:.74rem;padding:.3rem .5rem'>Wk Target</th>"
+        f"</tr></thead>"
+        f"<tbody>{''.join(tr_list)}</tbody>"
+        f"</table>"
+        f"<div style='color:#555;font-size:.71rem;margin-top:.4rem'>🌞 Mon–Fri daily rate to finish without Saturday</div>"
+        f"</div>",
+        unsafe_allow_html=True
     )
-    if rows and rows[0]["ppl"] is not None:
-        st.caption("Team daily target ÷ 5 days. Per-person shown where crew > 1.")
-    else:
-        st.caption("Run RefreshAppSheet with updated VBA (col 18 = People_Per_Task) to see per-person breakdown.")
+
+# ── Login gate ────────────────────────────────────────────────────────────────
+def render_login_gate(pins_map, df):
+    col_l, col_c, col_r = st.columns([1, 1, 1])
+    with col_c:
+        st.markdown(
+            "<div style='background:#1e1e2e;border-radius:14px;padding:2rem 1.5rem;"
+            "text-align:center;border:1px solid rgba(255,255,255,0.1);margin-bottom:1.5rem'>"
+            "<div style='font-size:2.5rem;margin-bottom:.4rem'>🎯</div>"
+            "<h2 style='color:#e0e0e0;margin:.0rem 0 .3rem'>Fulham Solar Farm</h2>"
+            "<p style='color:#aaa;font-size:.9rem;margin-bottom:0'>Enter your 5-digit crew PIN</p>"
+            "</div>", unsafe_allow_html=True)
+        pin = st.text_input("PIN", type="password", max_chars=5,
+                            placeholder="• • • • •", label_visibility="collapsed")
+        if st.button("🔓 Enter", use_container_width=True):
+            if pin == MANAGEMENT_PIN:
+                st.session_state["is_management"] = True
+                st.session_state["logged_in_person"] = None
+                st.rerun()
+            elif pin in pins_map:
+                st.session_state["is_management"] = False
+                st.session_state["logged_in_person"] = pins_map[pin]
+                st.rerun()
+            else:
+                st.error("Incorrect PIN. Try again.")
+    if df is not None:
+        st.markdown("---")
+        render_mech_targets_table(df)
 
 # ── Individual view ───────────────────────────────────────────────────────────
 def render_individual(df_pw, person):
@@ -272,10 +285,10 @@ def render_individual(df_pw, person):
     avg_pct   = (total_ach/total_tgt*100) if total_tgt>0 else 0.0
     sat_dec   = df_pw["Sat_Decision"].iloc[0] if len(df_pw) else "No data"
 
-    # Sat-off daily target = sum of (Wk_Target_Theo / 5) per active task
     sat_off_day = 0.0
-    if "Wk_Target_Theo" in active.columns and len(active):
-        sat_off_day = sum(sat_daily(v) for v in active["Wk_Target_Theo"])
+    if len(active):
+        for _, r in active.iterrows():
+            sat_off_day += sat_daily_pp(r.get("Task_Wk_Target", 0), r.get("People_Per_Task", 1))
 
     label, badge, ccls = status_info(avg_pct)
     st.markdown(f"## 👤 {person}")
@@ -319,10 +332,9 @@ def render_individual(df_pw, person):
     st.subheader("📋 Task Breakdown")
 
     def render_task(row, expanded=True):
-        pct         = row["Pct_Real"]*100
+        pct             = row["Pct_Real"]*100
         lbl, badge_t, _ = status_info(pct)
-        theo        = safe_num(row.get("Wk_Target_Theo",0))
-        sat_day_val = sat_daily(theo)
+        sat_day_val     = sat_daily_pp(row.get("Task_Wk_Target", 0), row.get("People_Per_Task", 1))
         with st.expander(
             f"**{row['Task']}**  —  {row['Wk_Achieved']:.1f} / {row['Wk_Target_Real']:.1f} units  ({pct:.1f}%)",
             expanded=expanded):
@@ -335,9 +347,9 @@ def render_individual(df_pw, person):
                 st.bar_chart(daily.set_index("Day"), height=200)
             with right:
                 st.markdown("**Weekly:**")
-                st.metric("Achieved",      f"{row['Wk_Achieved']:.1f}")
-                st.metric("Target (Real)", f"{row['Wk_Target_Real']:.1f}")
-                st.metric("Target (Theo)", f"{row['Wk_Target_Theo']:.1f}")
+                st.metric("Achieved",        f"{row['Wk_Achieved']:.1f}")
+                st.metric("Target (Real)",   f"{row['Wk_Target_Real']:.1f}")
+                st.metric("Target (Theo)",   f"{row['Wk_Target_Theo']:.1f}")
                 st.metric("🌞 Sat Off / day", f"{sat_day_val:.1f}",
                           help="Daily target Mon–Fri to finish without Saturday")
                 rem = row["Wk_Target_Real"] - row["Wk_Achieved"]
@@ -380,7 +392,7 @@ def render_taskview():
     has_task_tgt = "Task_Wk_Target" in df_tv.columns
     task_wk_tgt  = safe_num(df_tv["Task_Wk_Target"].iloc[0]) if has_task_tgt else 0
     active_count = len(df_tv[df_tv["Wk_Achieved"] > 0])
-    theo_pp      = safe_num(df_tv["Wk_Target_Theo"].iloc[0]) if "Wk_Target_Theo" in df_tv.columns else 0
+    ppl_plan     = int(round(safe_num(df_tv["People_Per_Task"].iloc[0]))) if "People_Per_Task" in df_tv.columns else max(active_count, 1)
 
     if task_wk_tgt > 0 and active_count > 0:
         wk_tgt_pp = task_wk_tgt / active_count
@@ -388,8 +400,7 @@ def render_taskview():
         wk_tgt_pp = safe_num(df_tv["Wk_Target_Real"].iloc[0]) \
                     if "Wk_Target_Real" in df_tv.columns else 0
 
-    # Sat-off daily: Wk_Target_Theo / 5
-    sat_off_day_pp = sat_daily(theo_pp) if theo_pp > 0 else sat_daily(wk_tgt_pp)
+    sat_off_day_pp = task_wk_tgt / 5.0 / max(ppl_plan, 1) if task_wk_tgt > 0 else wk_tgt_pp / 5.0
 
     df_tv["Pct_Completion"] = df_tv.apply(
         lambda r: r["Wk_Achieved"]/r["Wk_Target_Real"]*100 if r["Wk_Target_Real"]>0 else 0.0, axis=1)
@@ -626,111 +637,91 @@ def render_mgmt_progress():
             with st.expander(f"{icon} **{task}** — {s}"):
                 st.code(str(row.get("Explanation","")).replace(" | ","\n"),language=None)
 
-# ── PIN gate ──────────────────────────────────────────────────────────────────
-def render_pin_gate():
-    if st.session_state.get("mgmt_auth",False): return True
-    st.markdown('<div class="pin-box"><h2>🔒 Management Access</h2><p>Enter the 4-digit PIN to continue.</p></div>',unsafe_allow_html=True)
-    col = st.columns([1,1,1])[1]
-    with col:
-        pin = st.text_input("PIN",type="password",max_chars=4,placeholder="• • • •",label_visibility="collapsed")
-        if st.button("🔓 Unlock",use_container_width=True):
-            if pin==MANAGEMENT_PIN:
-                st.session_state["mgmt_auth"]=True; st.rerun()
-            else:
-                st.error("Incorrect PIN.")
-    return False
-
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
-    if "mgmt_auth" not in st.session_state: st.session_state["mgmt_auth"]=False
-    df, err = load_crew_data()
+    if "is_management"    not in st.session_state: st.session_state["is_management"]    = False
+    if "logged_in_person" not in st.session_state: st.session_state["logged_in_person"] = None
 
-    st.sidebar.title("🔍 Navigation")
-    view = st.sidebar.radio("View",["👤 Individual","🔧 Task View","🔒 Management"])
+    pins_map = load_pins_data()
+    df, err  = load_crew_data()
 
-    sel_week=None; sel_week_lbl=""; sel_person=None
-    week_labels={}; persons=[]; latest=""
-    best_week=None; best_week_idx=0
+    authenticated = st.session_state["is_management"] or st.session_state["logged_in_person"] is not None
 
-    if df is not None:
-        weeks_raw = sorted(df["Week_Start"].dropna().unique())
-        week_labels = {w:f"{fmt_date(w)}  (Week {i+1})" for i,w in enumerate(weeks_raw)}
+    weeks_raw   = sorted(df["Week_Start"].dropna().unique()) if df is not None else []
+    week_labels = {w: f"{fmt_date(w)}  (Week {i+1})" for i, w in enumerate(weeks_raw)}
+    persons     = sorted(df["Person"].unique().tolist()) if df is not None else []
+    latest      = weeks_raw[-1] if weeks_raw else ""
 
-        def _last_active(df_, wks):
-            for w in reversed(wks):
-                if df_ is not None and df_[df_["Week_Start"]==w]["Wk_Achieved"].sum() > 0:
-                    return w
-            return wks[-1] if wks else None
+    def _last_active(df_, wks):
+        for w in reversed(wks):
+            if df_ is not None and df_[df_["Week_Start"] == w]["Wk_Achieved"].sum() > 0:
+                return w
+        return wks[-1] if wks else None
 
-        best_week     = _last_active(df, list(weeks_raw))
-        best_week_idx = list(weeks_raw).index(best_week) if best_week in list(weeks_raw) else max(0,len(weeks_raw)-1)
-        week_options  = list(week_labels.values())
-        persons       = sorted(df["Person"].unique().tolist())
-        latest        = weeks_raw[-1] if weeks_raw else ""
-
-        if view=="👤 Individual":
-            st.sidebar.markdown("**Select Week:**")
-            sel_week_lbl = st.sidebar.selectbox("",week_options,index=best_week_idx,label_visibility="collapsed")
-            sel_week     = next((w for w,lbl in week_labels.items() if lbl==sel_week_lbl), best_week)
-            st.sidebar.markdown("**Select Person:**")
-            sel_person   = st.sidebar.selectbox("",["— Select a crew member —"]+persons,label_visibility="collapsed")
-
-    st.sidebar.markdown("---")
-    st.sidebar.caption("**Daily workflow:**\n\n1. Import QField → Excel\n2. Run **RefreshAppSheet**\n3. Run **PushAll**\n4. Click Reload ↓")
-    if df is not None:
-        st.sidebar.caption(f"📊 {len(df)} rows · {len(week_labels)} weeks\n\n🕒 {datetime.now().strftime('%I:%M %p, %d %b %Y')}")
-    if st.sidebar.button("🔄 Clear Cache & Reload"):
-        st.cache_data.clear(); st.session_state["mgmt_auth"]=False; st.rerun()
+    best_week     = _last_active(df, list(weeks_raw))
+    best_week_idx = list(weeks_raw).index(best_week) if best_week in list(weeks_raw) else max(0, len(weeks_raw)-1)
 
     st.markdown(
         f'<div class="main-header"><h1>🎯 Fulham Solar Farm — Weekly Targets</h1>'
         f'<p>Latest data: {fmt_date(latest) if latest else "—"}'
-        f'  ·  {len(week_labels)} week{"s" if len(week_labels)!=1 else ""} tracked'
+        f'  ·  {len(week_labels)} week{"s" if len(week_labels) != 1 else ""} tracked'
         f'  ·  {len(persons)} crew members</p></div>',
         unsafe_allow_html=True)
 
-    if view=="🔧 Task View":
-        render_taskview(); return
+    if not authenticated:
+        render_login_gate(pins_map, df)
+        return
 
-    if view=="🔒 Management":
-        if not render_pin_gate(): return
-        st.markdown('<div class="mgmt-header"><span style="font-size:1.2rem;font-weight:700;">🔒 Management Dashboard</span><span style="font-size:.85rem;opacity:.7;">Restricted access</span></div>',unsafe_allow_html=True)
-        mgmt_tab = st.radio("Section",["👥 Team Overview","📊 Project Progress"],horizontal=True)
-        if mgmt_tab=="👥 Team Overview":
-            if df is None: st.error(f"Could not load crew data: `{err}`")
+    # ── MANAGEMENT view ───────────────────────────────────────────────────────
+    if st.session_state["is_management"]:
+        st.sidebar.title("🔍 Navigation")
+        view = st.sidebar.radio("View", ["🔧 Task View", "👥 Team Overview", "📊 Project Progress"])
+        st.sidebar.markdown("---")
+        st.sidebar.caption(f"🕒 {datetime.now().strftime('%I:%M %p, %d %b %Y')}")
+        if st.sidebar.button("🔄 Clear Cache & Reload"):
+            st.cache_data.clear(); st.rerun()
+        if st.sidebar.button("🔒 Logout"):
+            st.session_state["is_management"] = False; st.rerun()
+        if view == "🔧 Task View":
+            render_taskview()
+        elif view == "👥 Team Overview":
+            if df is None:
+                st.error(f"Could not load crew data: `{err}`")
             else:
-                if week_labels:
-                    st.sidebar.markdown("**Select Week:**")
-                    mgmt_wlbl = st.sidebar.selectbox("Week (mgmt)",list(week_labels.values()),index=best_week_idx,label_visibility="collapsed")
-                    mgmt_week = next((w for w,lbl in week_labels.items() if lbl==mgmt_wlbl), best_week)
-                    render_team(df[df["Week_Start"]==mgmt_week].copy(), mgmt_wlbl)
+                st.sidebar.markdown("**Select Week:**")
+                mgmt_wlbl = st.sidebar.selectbox("Week", list(week_labels.values()),
+                                                  index=best_week_idx, label_visibility="collapsed")
+                mgmt_week = next((w for w, lbl in week_labels.items() if lbl == mgmt_wlbl), best_week)
+                render_team(df[df["Week_Start"] == mgmt_week].copy(), mgmt_wlbl)
         else:
             render_mgmt_progress()
-        st.markdown("---")
-        if st.button("🔒 Lock Management Area"):
-            st.session_state["mgmt_auth"]=False; st.rerun()
         return
+
+    # ── CREW view ─────────────────────────────────────────────────────────────
+    person = st.session_state["logged_in_person"]
+    st.sidebar.title(f"👤 {person}")
+    st.sidebar.markdown("**Select Week:**")
+    week_options = list(week_labels.values())
+    sel_week_lbl = st.sidebar.selectbox("", week_options, index=best_week_idx,
+                                         label_visibility="collapsed")
+    sel_week     = next((w for w, lbl in week_labels.items() if lbl == sel_week_lbl), best_week)
+    st.sidebar.markdown("---")
+    st.sidebar.caption("**Daily workflow:**\n\n1. Import QField → Excel\n2. Run **RefreshAppSheet**\n3. Run **PushAll**\n4. Click Reload ↓")
+    if st.sidebar.button("🔄 Clear Cache & Reload"):
+        st.cache_data.clear(); st.rerun()
+    if st.sidebar.button("🚪 Logout"):
+        st.session_state["logged_in_person"] = None; st.rerun()
 
     if df is None:
         st.error(f"Could not load crew data.\n\n`{err}`"); return
 
-    if sel_person is None or sel_person == "— Select a crew member —":
-        st.markdown(
-            '<div style="text-align:center;padding:2rem 2rem 1rem;">'
-            '<div style="font-size:3rem;margin-bottom:.5rem;">👷</div>'
-            '<h2 style="color:#e0e0e0;margin-bottom:0.3rem;">Select your name and week</h2>'
-            '<p style="color:#aaa;font-size:1rem;">Use the sidebar to choose your name — '
-            'your personal targets and progress will appear here.</p>'
-            '</div>',
-            unsafe_allow_html=True)
+    df_pw = df[(df["Week_Start"] == sel_week) & (df["Person"] == person)].copy()
+    if len(df_pw) == 0:
+        all_w = sorted(df[df["Person"] == person]["Week_Start"].unique())
+        st.warning(f"No data for **{person}** in week `{sel_week}`.\n\nWeeks found: `{all_w}`")
         render_mech_targets_table(df)
     else:
-        df_pw = df[(df["Week_Start"]==sel_week)&(df["Person"]==sel_person)].copy()
-        if len(df_pw)==0:
-            all_w = sorted(df[df["Person"]==sel_person]["Week_Start"].unique())
-            st.warning(f"No data for **{sel_person}** in week `{sel_week}`.\n\nWeeks found: `{all_w}`")
-        else:
-            render_individual(df_pw, sel_person)
+        render_individual(df_pw, person)
 
-if __name__=="__main__":
+if __name__ == "__main__":
     main()
