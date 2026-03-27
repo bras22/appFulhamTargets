@@ -43,16 +43,16 @@ def gviz_url(tab):
 def export_url(tab):
     return f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&sheet={tab}"
 
+# NEW
 def status_info(pct):
-    if pct>=100:  return "✅ GO HOME",      "badge-go",     "green"
-    elif pct>=95: return "✅ GO (95%+)",    "badge-go",     "green"
-    elif pct>=85: return "⚠️ BORDERLINE",   "badge-border", "amber"
-    elif pct>0:   return "❌ SAT REQUIRED", "badge-stay",   "red"
-    else:         return "— NO DATA",       "badge-nodata", "grey"
-
+    if pct>=100:  return "✅ GO HOME",       "badge-go",     "green"
+    elif pct>=85: return "⚠️ BORDERLINE",    "badge-border", "amber"
+    elif pct>0:   return "❌ SAT REQUIRED",  "badge-stay",   "red"
+    else:         return "— NO DATA",        "badge-nodata", "grey"
+    
 def prog_bar(pct):
     cap=min(float(pct),100)
-    c="#4dff91" if pct>=95 else ("#ffd54f" if pct>=85 else "#ff6b6b")
+    c="#4dff91" if pct>=100 else ("#ffd54f" if pct>=85 else "#ff6b6b")
     return f'<div class="prog-wrap"><div class="prog-bar" style="width:{cap:.1f}%;background:{c};"></div></div>'
 
 def fmt_date(iso):
