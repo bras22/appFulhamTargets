@@ -522,9 +522,9 @@ def render_team(df_week, week_lbl):
     need_sat   = int((summary["active"]&(summary["pct"]<85)).sum())
     no_act     = int((~summary["active"]).sum())
     mc1,mc2,mc3,mc4 = st.columns(4)
-    mc1.metric("✅ On Track (≥95%)",on_track)
-    mc2.metric("⚠️ Borderline (85–94%)",borderline)
-    mc3.metric("❌ Need Saturday (<85%)",need_sat)
+    mc1.metric("✅ On Track (>99%)",on_track)
+    mc2.metric("⚠️ Borderline (85–99%)",borderline)
+    mc3.metric("❌ Need Saturday (<99%)",need_sat)
     mc4.metric("— No Activity",no_act)
     st.markdown("---")
     cols = st.columns(4)
@@ -690,9 +690,26 @@ def main():
             else:
                 st.sidebar.markdown("**Select Week:**")
                 mgmt_wlbl = st.sidebar.selectbox("Week", list(week_labels.values()),
-                                                  index=best_week_idx, label_visibility="collapsed")
+                                                index=best_week_idx, label_visibility="collapsed")
                 mgmt_week = next((w for w, lbl in week_labels.items() if lbl == mgmt_wlbl), best_week)
-                render_team(df[df["Week_Start"] == mgmt_week].copy(), mgmt_wlbl)
+
+                # ── Person drill-down ─────────────────────────────────────────────
+                st.sidebar.markdown("**View Individual:**")
+                person_options = ["— Team Overview —"] + sorted(
+                    df[df["Week_Start"] == mgmt_week]["Person"].unique().tolist()
+                )
+                sel_person = st.sidebar.selectbox("Person", person_options,
+                                                label_visibility="collapsed")
+
+                if sel_person == "— Team Overview —":
+                    render_team(df[df["Week_Start"] == mgmt_week].copy(), mgmt_wlbl)
+                else:
+                    df_pw = df[(df["Week_Start"] == mgmt_week) &
+                            (df["Person"] == sel_person)].copy()
+                    if df_pw.empty:
+                        st.warning(f"No data for **{sel_person}** in week `{mgmt_wlbl}`.")
+                    else:
+                        render_individual(df_pw, sel_person)
         else:
             render_mgmt_progress()
         return
